@@ -84,6 +84,63 @@ class Object2Cam(object):
                        self.box2d[2], self.box2d[3], self.h, self.w, self.l, self.t[0], self.t[1], self.t[2],
                        self.ry, self.score)
         return kitti_str
+    
+    @staticmethod
+    def project_to_image(pts_3d, P):
+        ''' Project 3d points to image plane.
+        Usage: pts_2d = projectToImage(pts_3d, P)
+          input: pts_3d: nx3 matrix
+                 P:      3x4 projection matrix
+          output: pts_2d: nx2 matrix
+          P(3x4) dot pts_3d_extended(4xn) = projected_pts_2d(3xn)
+          => normalize projected_pts_2d(2xn)
+          <=> pts_3d_extended(nx4) dot P'(4x3) = projected_pts_2d(nx3)
+              => normalize projected_pts_2d(nx2)
+        '''
+        n = pts_3d.shape[0]
+        pts_3d_extend = np.hstack((pts_3d, np.ones((n, 1))))
+        # print(('pts_3d_extend shape: ', pts_3d_extend.shape))
+        pts_2d = np.dot(pts_3d_extend, np.transpose(P))  # nx3
+        pts_2d[:, 0] /= pts_2d[:, 2]
+        pts_2d[:, 1] /= pts_2d[:, 2]
+        return pts_2d[:, 0:2]
+
+    def compute_box_3d(self, P):
+        ''' Takes an object and a projection matrix (P) and projects the 3d
+            bounding box into the image plane.
+            Returns:
+                corners_2d: (8,2) array in left image coord.
+                corners_3d: (8,3) array in in rect camera coord.
+        '''
+        # compute rotational matrix around yaw axis
+        R = Calibration.roty(self.ry)
+
+        # 3d bounding box dimensions
+        l = self.l
+        w = self.w
+        h = self.h
+
+        # 3d bounding box corners
+        x_corners = [l / 2, l / 2, -l / 2, -l / 2, l / 2, l / 2, -l / 2, -l / 2]
+        y_corners = [0, 0, 0, 0, -h, -h, -h, -h]
+        z_corners = [w / 2, -w / 2, -w / 2, w / 2, w / 2, -w / 2, -w / 2, w / 2]
+
+        # rotate and translate 3d bounding box
+        corners_3d = np.dot(R, np.vstack([x_corners, y_corners, z_corners]))
+        # print corners_3d.shape
+        corners_3d[0, :] = corners_3d[0, :] + self.t[0]
+        corners_3d[1, :] = corners_3d[1, :] + self.t[1]
+        corners_3d[2, :] = corners_3d[2, :] + self.t[2]
+        # print 'cornsers_3d: ', corners_3d
+        # only draw 3d bounding box for objs in front of the camera
+        if np.any(corners_3d[2, :] < 0.1):
+            corners_2d = None
+            return corners_2d, np.transpose(corners_3d)
+
+        # project the 3d bounding box into the image plane
+        corners_2d = Object2Cam.project_to_image(np.transpose(corners_3d), P)
+        # print 'corners_2d: ', corners_2d
+        return corners_2d, np.transpose(corners_3d)
 
 class Object2Velo(object):
     # refer
@@ -112,6 +169,17 @@ class Object2Velo(object):
         src = np.array(src, dtype=box3d.dtype)
         box3d[..., :3] += box3d[..., 3:6] * (dst - src)
         return box3d
+
+    @staticmethod
+    def camera_to_lidar_corner(corners, calib):
+        cs = []
+        for c in corners:
+            x, y, z = c
+            (x,y,z) = Object2Velo.camera_to_lidar(x, y, z, calib.V2C, calib.R0, calib.P)
+            cs.append([x,y,z])
+            continue
+        cs = np.array(cs).reshape(-1, 3)
+        return cs
 
     @staticmethod
     def camera_to_lidar_box(object2cam, calib):
@@ -324,7 +392,7 @@ class Calibration(object):
         inv_Tr[0:3, 3] = np.dot(-np.transpose(Tr[0:3, 0:3]), Tr[0:3, 3])
         return inv_Tr
 
-class PointROI(object):
+class BoundaryCheck(object):
     # refer
     # https://github.com/maudzung/Complex-YOLOv4-Pytorch
     def __init__(self, cfg):
@@ -335,13 +403,17 @@ class PointROI(object):
         self.minZ = cfg.minZ
         self.maxZ = cfg.maxZ
 
-    def __call__(self, points):
+    def __call__(self, gt_boxes, points):
+        mask = np.where((gt_boxes[:, 0] > self.minX) & (gt_boxes[:, 0] < self.maxX) &
+                        (gt_boxes[:, 1] > self.minY) & (gt_boxes[:, 1] < self.maxy))
+        Gt_Boxes = gt_boxes[mask]
+
         mask = np.where((points[:, 0] >= self.minX) & (points[:, 0] < self.maxX) &
                         (points[:, 1] >= self.minY) & (points[:, 1] < self.maxY) &
                         (points[:, 2] >= self.minZ) & (points[:, 2] < self.maxZ))
         PointCloud = points[mask]
         #PointCloud[:, 2] = PointCloud[:, 2] - self.minZ
-        return PointCloud
+        return Gt_Boxes, PointCloud
 
 class Point2Voxel(object):
     # refer
@@ -479,11 +551,11 @@ class GlobalRandomTranslate(object):
         self.xscale = xscale
         self.yscale = yscale
         self.zscale = zscale
-    def __call__(gt_boxes, points, noise_translate_std):
+    def __call__(self, gt_boxes, points, noise_translate_std):
         if np.random.uniform(0, 1) < self.p:
-            randomx = np.random.uniform(0, 1) * 2 * self.xscale - self.xscale
-            randomy = np.random.uniform(0, 1) * 2 * self.yscale - self.yscale
-            randomz = np.random.uniform(0, 1) * 2 * self.zscale - self.zscale
+            randomx = np.random.uniform(-self.xscale, self.xscale)
+            randomy = np.random.uniform(-self.yscale, self.yscale)
+            randomz = np.random.uniform(-self.zscale, self.zscale)
             points[:, 0] += randomx
             points[:, 1] += randomy
             points[:, 2] += randomz
@@ -492,3 +564,106 @@ class GlobalRandomTranslate(object):
                 gt_boxes[:, 1] += randomy
                 gt_boxes[:, 2] += randomz
         return gt_boxes, points, noise_translate
+
+class RandomMosaic(object):
+    def __init__(self, cfg):
+        self.voxelshape = cfg.voxelshape
+        self.voxelsize = cfg.voxelsize
+        self.minX = cfg.minX
+        self.maxX = cfg.maxX
+        self.minY = cfg.minY
+        self.maxY = cfg.maxY
+        self.minZ = cfg.minZ
+        self.maxZ = cfg.maxZ
+
+    def global_boundary_check(self, points, labels, calibs):
+        mask = np.where((points[:, 0] >= self.minX) & (points[:, 0] < self.maxX) &
+                        (points[:, 1] >= self.minY) & (points[:, 1] < self.maxY) &
+                        (points[:, 2] >= self.minZ) & (points[:, 2] < self.maxZ))
+        PointCloud = points[mask]
+        #PointCloud[:, 2] = PointCloud[:, 2] - self.minZ
+
+        Labels = []
+        for label, calib in zip(labels, calibs):
+            ls = []
+            if label is not None:
+                pass
+            else:
+                Labels.append(None)
+            for o in label:
+                x, y, z = Object2Velo.camera_to_lidar(o.t[0], o.t[1], o.t[2], calib.V2C, calib.R0, calib.P)
+                if ((x > self.minX) & (x < self.maxX) &
+                (y > self.minY) & (y < self.maxX) &
+                (z > self.minZ) & (z < self.maxZ)):
+                    ls.append(o)
+                continue
+            if len(ls) == 0:
+                Labels.append(None)
+            Labels.append(o)
+            continue
+        return PointCloud, Labels
+
+    def global_shift(self, points, labels, rx, ry):
+        cnt = 0
+        PointCloud, Labels = [], []
+        for point, label in zip(points, labels):
+            if cnt == 0:
+                point_ = point[:, 씨발 label이거 camera좌표임 ㅋㅋㅋㅋㅋㅋㅋ]
+            cnt = cnt + 1
+            continue
+        return PointCloud, Labels
+
+    def get_vaild_cehck_bev(self, corners3dvelo, rx, ry):
+        info = []
+        cnt = 0
+        for corners3d in corners3dvelo:
+            if corners3d is not None:
+                pass
+            else:
+                info.append(None)
+            for corners in corners3d:
+                x1, y1 = corners[0, 1], corners[0, 2]
+
+    def get_corners3d_velo(self, labels, calibs):
+        corners3dcam = []
+        for label, calib in zip(labels, calibs):
+            cs = []
+            if label is not None:
+                pass
+            else:
+                corners3dcam.append(None)
+                continue
+            for l in label:
+                _, corners3d_ = l.compute_box_3d(calib.P)
+                cs.append(corners3d_)
+                continue
+            corners3dcam.append(cs)
+            continue
+
+        corners3dvelo = []
+        for corners3d, calib in zip(corners3dcam, calibs):
+            cs = []
+            if corners3d is not None:
+                pass
+            else:
+                corners3dvelo.append(None)
+                continue
+            for corners in corners3d:
+                corners_ = Object2Velo.camera_to_lidar_corner(corners, calib)
+                cs.append(corners_)
+                continue
+            corners3dvelo.append(cs)
+            continue
+        return corners3dvelo
+
+    def __call__(self, points, labels, calibs):
+        rx = np.random.uniform(0.2, 0.8) * self.voxelshape[2] * self.voxelsize[2]
+        ry = np.random.uniform(0.2, 0.8) * self.voxelshape[1] * self.voxelsize[1]
+
+        corners3dvelo = self.get_corners3d_velo(labels, calibs)
+        self.get_vaild_cehck_bev(corners3dvelo, rx, ry)
+        print(corners3dvelo)
+        print(rx,ry)
+        df=df
+
+        
