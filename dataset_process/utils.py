@@ -19,18 +19,30 @@ class KittiScene(object):
     def __init__(self, filepath):
         self.points = np.fromfile(filepath, dtype=np.float32).reshape(-1, 4)
 
-    def shift3d(self, x, y, z):
+    def shift3d(self, x, y, z, kittiobjects=None):
+        if kittiobjects is not None:
+            for object in kittiobjects:
+                object.shift3d(x, y, z)
         self.points[:, 0] = self.points[:, 0] + x
         self.points[:, 1] = self.points[:, 1] + y
         self.points[:, 2] = self.points[:, 2] + z
         
-    def scale3d(self, scale):
+    def scale3d(self, scale, kittiobjects=None):
+        if kittiobjects is not None:
+            for object in kittiobjects:
+                object.scale3d(x, y, z)
         self.points[:, :3] = self.points[:, :3] * scale
 
-    def filp3d(self):
+    def filp3d(self, kittiobjects=None):
+        if kittiobjects is not None:
+            for object in kittiobjects:
+                object.filp3d()
         self.points[:, 1] = - self.points[:, 1]
 
-    def rotate3d(self, angle):
+    def rotate3d(self, angle, kittiobjects=None):
+        if kittiobjects is not None:
+            for object in kittiobjects:
+                object.rotate3d(angle)
         rot_sin = np.sin(angle)
         rot_cos = np.cos(angle)
         rot_mat_T = np.array([[rot_cos, -rot_sin, 0], [rot_sin, rot_cos, 0], [0, 0, 1]],dtype=np.float32)
@@ -38,23 +50,25 @@ class KittiScene(object):
 
     def remove_object_innerpoints(self, kittiobjects):
         if kittiobjects is None:
-            return self.points
-
-        for object in kittiobjects:
-            boundary = object.compute_boundary3d()
-            self.points = KittiObjectUtils.remove_inner_points(boundary, self.points)
-            continue
-        return self.points
+            pass
+        else:
+            for object in kittiobjects:
+                boundary = object.compute_boundary3d()
+                self.points = KittiObjectUtils.remove_inner_points(boundary, self.points)
+                continue
 
     def add_object_innerpoints(self, kittiobjects):
         if kittiobjects is None:
-            return self.points
-
-        for object in kittiobjects:
-            innerpoints = object.innerpoints
-            self.points = np.concatenate([self.points, innerpoints], axis=0)
-            continue
-        return self.points
+            pass
+        else:
+            for object in kittiobjects:
+                innerpoints = object.innerpoints
+                self.points = np.concatenate([self.points, innerpoints], axis=0)
+                continue
+    
+    def merge_dif_scene(self, *args):
+        for i in args:
+            self.points = np.concatenate([self.points, i.points])
 
 class KittiObject(object):
     def __init__(self, label_file_line, points, calib):
@@ -84,7 +98,7 @@ class KittiObject(object):
         #self.dis_to_cam = np.linalg.norm(self.t)
         self.ry = data[14]  # yaw angle (around Y-axis in camera coordinates) [-pi..pi]
         self.score = data[15] if data.__len__() == 16 else -1.0
-        self.level_str, self.level = self.get_obj_level(self)
+        self.level_str, self.level = self.get_obj_level()
 
         (x, y, z) = KittiObjectUtils.camera_to_lidar(\
             self.camx, self.camy, self.camz, calib.V2C, calib.R0, calib.P)
@@ -99,7 +113,7 @@ class KittiObject(object):
         minX, maxX = self.velocorners3d[:, 0].min(), self.velocorners3d[:, 0].max()
         minY, maxY = self.velocorners3d[:, 1].min(), self.velocorners3d[:, 1].max()
         minZ, maxZ = self.velocorners3d[:, 2].min(), self.velocorners3d[:, 2].max()
-        return [minX, maxX, minY, maxY, minZ, maxZ]
+        return np.array([minX, maxX, minY, maxY, minZ, maxZ], dtype=np.float32)
 
     def shift3d(self, x, y, z):
         # 상남자특) 카메라 값들 -> 고려안함
@@ -203,7 +217,6 @@ class KittiObject(object):
             return -1
         return CLASS_NAME_TO_ID[cls_type]
 
-    @staticmethod
     def get_obj_level(self):
         height = float(self.box2d[3]) - float(self.box2d[1]) + 1
         if height >= 40 and self.truncation <= 0.15 and self.occlusion <= 0:
@@ -220,6 +233,7 @@ class KittiObjectUtils(object):
         pass
     
     @staticmethod
+    @numba.jit(nopython=True)
     def remove_inner_points(boundary, points):
         minX, maxX, minY, maxY, minZ, maxZ = boundary
         mask = np.where((points[:, 0] < minX) | (points[:, 0] > maxX) |
@@ -229,6 +243,7 @@ class KittiObjectUtils(object):
         return outerpoints
 
     @staticmethod
+    @numba.jit(nopython=True)
     def compute_boundary_inner_points(boundary, points):
         minX, maxX, minY, maxY, minZ, maxZ = boundary
         mask = np.where((points[:, 0] >= minX) & (points[:, 0] < maxX) &
@@ -236,6 +251,68 @@ class KittiObjectUtils(object):
                         (points[:, 2] >= minZ) & (points[:, 2] < maxZ))
         innerpoints = points[mask]
         return innerpoints
+
+    @staticmethod
+    def verify_object_inner_boundary(boundary, kittiobjects):
+        minX, maxX, minY, maxY, minZ, maxZ = boundary
+        vl = []
+        if kittiobjects is None:
+            return None
+        else:
+            for o in kittiobjects:
+                if ((o.velox > minX) & (o.velox < maxX) &
+                    (o.veloy > minY) & (o.veloy < maxY)):
+                    flag = True
+                else:
+                    flag = False
+
+                if flag == True:
+                    vl.append(o)
+                continue
+            if len(vl) == 0:
+                return None
+            else:
+                return vl
+
+    @staticmethod
+    def cehck_overlap_object_and_merge(kittiobjectlist):
+        vkitti = []
+        stat = [True, True, True, True]
+        for i in range(len(kittiobjectlist)):
+            fnum = 0
+            if kittiobjectlist[i] is None:
+                stat[i] = False
+                continue
+            for object in kittiobjectlist[i]:
+                x, y = object.velox, object.veloy
+                flag = False
+                for j in range(i+1, len(kittiobjectlist)):
+                    if kittiobjectlist[j] is None:
+                        break
+
+                    if flag == True:
+                        break
+                    for object_ in kittiobjectlist[j]:
+                        if flag == True:
+                            break
+                        x_, y_ = object_.velox, object_.veloy
+                        if (abs(x - x_) < 1.5) & (abs(y - y_) < 1.5):
+                            continue
+                        else:
+                            flag = True
+                        continue
+                    continue
+                if flag == True:
+                    fnum = fnum + 1
+                    continue
+                vkitti.append(object)
+                continue
+            if fnum == len(kittiobjectlist[i]):
+                stat[i] = False
+            continue
+        if len(vkitti) == 0:
+            vkitti = None
+        return vkitti, stat
 
     @staticmethod
     def project_to_image(pts_3d, P):
@@ -516,7 +593,7 @@ class Point2Voxel(object):
         return voxels, coors, num_points_per_voxel
 
 class RandomMosaic(object):
-    def __init__(self, cfg):
+    def __init__(self, cfg, probability=0.5):
         self.voxelshape = cfg.voxelshape
         self.voxelsize = cfg.voxelsize
         self.minX = cfg.minX
@@ -525,55 +602,24 @@ class RandomMosaic(object):
         self.maxY = cfg.maxY
         self.minZ = cfg.minZ
         self.maxZ = cfg.maxZ
-        self.boundary = [self.minX, self.maxX, self.minY, self.maxY, self.minZ, self.maxZ]
+        self.boundary = np.array([self.minX, self.maxX,
+                                  self.minY, self.maxY, self.minZ, self.maxZ], dtype=np.float32)
+        self.p = probability
 
-    def get_vaild_cehck_bev(self, corners3dvelo, rx, ry):
-        info = []
-        cnt = 0
-        for corners3d in corners3dvelo:
-            if corners3d is not None:
-                pass
-            else:
-                info.append(None)
-            for corners in corners3d:
-                x1, y1 = corners[0, 1], corners[0, 2]
-
-    def get_corners3d_velo(self, labels, calibs):
-        corners3dcam = []
-        for label, calib in zip(labels, calibs):
-            cs = []
-            if label is not None:
-                pass
-            else:
-                corners3dcam.append(None)
-                continue
-            for l in label:
-                _, corners3d_ = l.compute_box_3d(calib.P)
-                cs.append(corners3d_)
-                continue
-            corners3dcam.append(cs)
-            continue
-
-        corners3dvelo = []
-        for corners3d, calib in zip(corners3dcam, calibs):
-            cs = []
-            if corners3d is not None:
-                pass
-            else:
-                corners3dvelo.append(None)
-                continue
-            for corners in corners3d:
-                corners_ = Object2Velo.camera_to_lidar_corner(corners, calib)
-                cs.append(corners_)
-                continue
-            corners3dvelo.append(cs)
-            continue
-        return corners3dvelo
-
-    def __call__(self, points, labels, calibs):
+    def __call__(self, points, labels):
         """
+        input
+        points-> [KittiScene, ...]
+        labels-> [[KittiObject, ...], ...]
+
+        output
+        outpoints-> KittiScene
+        labels-> [KittiObject, ...]
+        info-> [6]
+        0,1,2,3-> Indicates whether an object exists or does not exist in the area below. 
+        4,5-> rx, ry
         ----------------
-        | 4     | 3
+        | 3     | 2
         |       |
         |       |
         -------rxry-----
@@ -590,23 +636,121 @@ class RandomMosaic(object):
         # remove outer points
         for scene in points:
             scene.points = KittiObjectUtils.compute_boundary_inner_points(self.boundary, scene.points)
-            
+            continue
+  
         # remove object points
         for scene, object in zip(points, labels):
-            print(scene.points.shape)
-            scene.points = scene.remove_object_innerpoints(object)
-        print('-----------')
-        for scene, object in zip(points, labels):
-            print('scene')
-            print(scene.points.shape)
-            print('obejct')
-            if object is None:
-                continue
-            else:
-                for o in object:
-                    print(o.innerpoints.shape)
-                    print(o.level_str)
+            scene.remove_object_innerpoints(object)
+            continue
 
-        df=df
+        # shift y-axis
+        for scene, object in zip(points, labels):
+            scene.shift3d(0, -self.minY, 0, object)
+            continue
+
+        # shift scene & object
+        if np.random.uniform(0, 1) < self.p:
+            cnt = 0
+            for scene, object in zip(points, labels):
+                if cnt == 0:
+                    scene.shift3d(-rx, +ry, 0, object)
+                elif cnt == 1:
+                    scene.shift3d(-rx, -ry, 0, object)
+                elif cnt == 2:
+                    scene.shift3d(+rx, +ry, 0, object)
+                elif cnt == 3:
+                    scene.shift3d(+rx, -ry, 0, object)
+                cnt = cnt + 1
+                continue
+        else:
+            pass
+
+        # remove outer points & object
+        cnt = 0
+        vlabels = []
+        for scene, object in zip(points, labels):
+            if cnt == 0:
+                boundary_ = [self.minX, rx, ry, self.maxY-self.minY, self.minZ, self.maxZ]
+            elif cnt == 1:
+                boundary_ = [self.minX, rx, 0, ry, self.minZ, self.maxZ]
+            elif cnt == 2:
+                boundary_ = [rx, self.maxX, ry, self.maxY-self.minY, self.minZ, self.maxZ]
+            elif cnt == 3:
+                boundary_ = [rx, self.maxX, 0, ry, self.minZ, self.maxZ]
+            boundary_ = np.array(boundary_, dtype=np.float32)
+
+            scene.points = KittiObjectUtils.compute_boundary_inner_points(boundary_, scene.points)
+            vlabels.append(KittiObjectUtils.verify_object_inner_boundary(boundary_, object))
+            cnt = cnt + 1
+            continue
+
+        # check overlap object and merge
+        vkitti, stat = KittiObjectUtils.cehck_overlap_object_and_merge(labels)
+        
+        # shift y-axis
+        for scene in points:
+            scene.shift3d(0, self.minY, 0)
+            continue
+        if vkitti is not None:
+            for object in vkitti:
+                object.shift3d(0, self.minY, 0)
+                continue
+
+        # merge points
+        points[0].merge_dif_scene(points[1], points[2], points[3])
+        points[0].add_object_innerpoints(vkitti)
+
+        return points[0], vkitti, stat
 
         
+class RandomMixup(object):
+    def __init__(self, cfg):
+        self.minX = cfg.minX
+        self.maxX = cfg.maxX
+        self.minY = cfg.minY
+        self.maxY = cfg.maxY
+        self.minZ = cfg.minZ
+        self.maxZ = cfg.maxZ
+
+    def __call__(self, points, labels, labels_, ra, rx, ry):
+        if ra == 0:
+            minX, maxX, minY, maxY = 0, rx, ry+cfg.minY, cfg.maxY
+        elif ra == 1:
+            minX, maxX, minY, maxY = 0, rx, cfg.minY, ry+cfg.minY
+        elif ra == 2:
+            minX, maxX, minY, maxY = rx, cfg.maxX, ry+cfg.minY, cfg.maxY
+        elif ra == 3:
+            minX, maxX, minY, maxY = rx, cfg.maxX, cfg.minY, ry+cfg.minY
+        
+        cx = np.random.uniform(0.2, 0.8) * (maxX - minX)
+        cy = np.random.uniform(0.2, 0.8) * (maxY - minY)
+        jumpguy = random.choice(labels_)
+        shiftx, shifty = cx - jumpguy.velox, cy - jumpguy.veloy 
+        jumpguy.shift3d(shiftx, shifty, 0)
+        
+        points.remove_object_innerpoints([jumpguy])
+        points.add_object_innerpoints([jumpguy])
+        if labels is not None:
+            labels.append(jumpguy)
+            return points, labels
+        return points, [jumpguy]
+
+
+class RandomPyramid(object):
+    def __init__(self, cfg, probability=0.5):
+        self.voxelshape = cfg.voxelshape
+        self.voxelsize = cfg.voxelsize
+        self.minX = cfg.minX
+        self.maxX = cfg.maxX
+        self.minY = cfg.minY
+        self.maxY = cfg.maxY
+        self.minZ = cfg.minZ
+        self.maxZ = cfg.maxZ
+        self.boundary = np.array([self.minX, self.maxX,
+                                  self.minY, self.maxY, self.minZ, self.maxZ], dtype=np.float32)
+        self.p = probability
+
+    def __call__(self, points, labels):
+        if len(labels) == 1 or labels is None:
+            return points, labels
+        return 0
