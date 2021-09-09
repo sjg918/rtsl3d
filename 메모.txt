@@ -39,3 +39,12 @@ mosaic에서 객체가 존재하지 않는 영역을 알수있음
 4. 그 곳에 잇는 모든 점을 지움
 5. 그리고 객체를 집어넣으면 완성
 --
+
+print(rx, ry)
+        for object in labels:
+            if object is None:
+                continue
+            else:
+                for o in object:
+                    print(o.velox, o.veloy, o.veloz)
+        print('----------------------------------')
