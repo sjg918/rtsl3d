@@ -5,7 +5,7 @@ from .utils import *
 import os
 import numpy as np
 
-_BASE_DIR = './samples/'
+_BASE_DIR = 'C:\Datasets/sample/'
 
 class KittiDataset(data.Dataset):
     def __init__(self, cfg, mode='train'):
@@ -14,6 +14,9 @@ class KittiDataset(data.Dataset):
             self.lists = f.readlines()
         self.point2voxel = Point2Voxel(cfg)
         self.randommosaic = RandomMosaic(cfg)
+        self.randommixup = RandomMixup(cfg)
+        self.boundary = np.array([cfg.minX, cfg.maxX,
+                                  cfg.minY, cfg.maxY, cfg.minZ, cfg.maxZ], dtype=np.float32)
     def __len__(self):
         return len(self.lists)
 
@@ -22,7 +25,7 @@ class KittiDataset(data.Dataset):
         if self.mode == 'val':
             return 0
         
-        Plist, Llist, Clist = [], [], []
+        Plist, Llist = [], []
         for i in range(4):
             id = random.randint(0, self.__len__() - 1)
             points = self.read_velo(_BASE_DIR + 'velodyne(lidar)/' + self.lists[id][:6] + '.bin')
@@ -30,13 +33,28 @@ class KittiDataset(data.Dataset):
             labels = self.read_label(_BASE_DIR + 'label/' + self.lists[id][:6] + '.txt', points, calib)
             Plist.append(points)
             Llist.append(labels)
-            Clist.append(calib)
-            # x, y, z, w, l, h, ry
-            #bbox_, cls_, dif_ = Object2Velo.camera_to_lidar_box(labels, calib)
-            #points = self.pointroi(points)
-            #voxels, coors, num_points_per_voxel = self.point2voxel(points)
         
-        kew = self.randommosaic(Plist, Llist, Clist)
+        points, labels, stat = self.randommosaic(Plist, Llist)
+        ra, rx, ry = self.random_select_area(stat[:4]), stat[4], stat[5]
+        if ra is not None:
+            while True:
+                id = random.randint(0, self.__len__() - 1)
+                points_ = self.read_velo(_BASE_DIR + 'velodyne(lidar)/' + self.lists[id][:6] + '.bin')
+                calib_  = self.read_calib(_BASE_DIR + 'calib/' + self.lists[id][:6] + '.txt')
+                labels_ = self.read_label(_BASE_DIR + 'label/' + self.lists[id][:6] + '.txt', points, calib)
+                labels_ = KittiObjectUtils.verify_object_inner_boundary(self.boundary, labels_)
+                if labels_ is not None:
+                    break
+                continue
+            points, labels = self.randommixup(points, labels, labels_, ra, rx, ry)
+        DF=DF
+        if len(labels) == 1 or labels is None:
+            dropout
+        poitns, labels = self.randompyramid(points, labels)
+        #print(points.points.shape)
+        #df=df
+        #points = self.pointroi(points)
+        #voxels, coors, num_points_per_voxel = self.point2voxel(points)
         return 0
 
     def read_velo(self, filepath):
@@ -61,3 +79,14 @@ class KittiDataset(data.Dataset):
             return olist
         else:
             return None
+
+    def random_select_area(self, stat):
+        if False not in stat:
+            return None
+        
+        idx = []
+        for n, i in enumerate(stat):
+            if i == False:
+                idx.append(n)
+            continue
+        return random.choice(idx)
