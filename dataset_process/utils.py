@@ -699,7 +699,8 @@ class RandomMosaic(object):
         # merge points
         points[0].merge_dif_scene(points[1], points[2], points[3])
         points[0].add_object_innerpoints(vkitti)
-
+        stat.append(rx)
+        stat.append(ry)
         return points[0], vkitti, stat
 
         
@@ -714,13 +715,13 @@ class RandomMixup(object):
 
     def __call__(self, points, labels, labels_, ra, rx, ry):
         if ra == 0:
-            minX, maxX, minY, maxY = 0, rx, ry+cfg.minY, cfg.maxY
+            minX, maxX, minY, maxY = 0, rx, ry+self.minY, self.maxY
         elif ra == 1:
-            minX, maxX, minY, maxY = 0, rx, cfg.minY, ry+cfg.minY
+            minX, maxX, minY, maxY = 0, rx, self.minY, ry+self.minY
         elif ra == 2:
-            minX, maxX, minY, maxY = rx, cfg.maxX, ry+cfg.minY, cfg.maxY
+            minX, maxX, minY, maxY = rx, self.maxX, ry+self.minY, self.maxY
         elif ra == 3:
-            minX, maxX, minY, maxY = rx, cfg.maxX, cfg.minY, ry+cfg.minY
+            minX, maxX, minY, maxY = rx, self.maxX, self.minY, ry+self.minY
         
         cx = np.random.uniform(0.2, 0.8) * (maxX - minX)
         cy = np.random.uniform(0.2, 0.8) * (maxY - minY)
@@ -736,21 +737,213 @@ class RandomMixup(object):
         return points, [jumpguy]
 
 
+class PyramidUtils(object):
+    def __init__(self):
+        pass
+
+    @staticmethod
+    @numba.jit(nopython=True)
+    def compute_8plane_through_9corners(corners3d, cornersequence):
+        """
+        corners3d has 9 points. following order:
+        1 -------- 0
+        /|         /|
+        2 -------- 3 .
+        | |        | |    center -> 8
+        . 5 -------- 4
+        |/         |/
+        6 -------- 7
+        
+        cornersequence. following order:
+        0-> 801 / 1-> 812 / 2-> 823 / 3-> 830
+        4-> 804 / 5-> 815 / 6-> 826 / 7-> 837
+        """
+
+        planes = np.zeros((8, 4), dtype=np.float32)
+        for i in range(8):
+            sequence = cornersequence[i]
+            p1, p2, p3 = sequence
+            point1, point2, point3 = corners3d[p1], corners3d[p2], corners3d[p3]
+            v1 = point3 - point1
+            v2 = point2 - point1
+            cp = np.cross(v1, v2)
+            a, b, c = cp
+            d = np.dot(cp, point3)
+            planes[i, :] = a, b, c, d
+            continue
+        return planes
+
+    @staticmethod
+    @numba.jit(nopython=True)
+    def divid_object_to_6pyramids(points, planes, planesequence):
+        numpoints = points.shape[0]
+        topmask = np.zeros((numpoints), dtype=np.bool_)
+        bottommask = np.zeros((numpoints), dtype=np.bool_)
+        leftmask = np.zeros((numpoints), dtype=np.bool_)
+        rightmask = np.zeros((numpoints), dtype=np.bool_)
+        frontmask = np.zeros((numpoints), dtype=np.bool_)
+        rearmask = np.zeros((numpoints), dtype=np.bool_)
+        #topmask, bottommask, leftmask, rightmask, frontmask, rearmask = masks
+        for i in range(6):
+            sequence = planesequence[i]
+            p1, p2, p3, p4 = sequence
+            plane1, plane2, plane3, plane4 = planes[p1], planes[p2], planes[p3], planes[p4]
+            a1, b1, c1, d1 = plane1
+            a2, b2, c2, d2 = plane2
+            a3, b3, c3, d3 = plane3
+            a4, b4, c4, d4 = plane4
+            
+            if i == 0: # top
+                for pn in range(numpoints):
+                    x, y, z, _ = points[pn]
+                    if ((a1 * x + b1 * y + c1 * z - d1 > 0) &
+                        (a2 * x + b2 * y + c2 * z - d2 > 0) &
+                        (a3 * x + b3 * y + c3 * z - d3 > 0) &
+                        (a4 * x + b4 * y + c4 * z - d4 > 0)):
+                        topmask[pn] = True
+                    else:
+                        continue
+                    continue
+            elif i == 1: # bottom
+                for pn in range(numpoints):
+                    x, y, z, _ = points[pn]
+                    if ((a1 * x + b1 * y + c1 * z - d1 < 0) &
+                        (a2 * x + b2 * y + c2 * z - d2 < 0) &
+                        (a3 * x + b3 * y + c3 * z - d3 < 0) &
+                        (a4 * x + b4 * y + c4 * z - d4 < 0)):
+                        bottommask[pn] = True
+                    else:
+                        continue
+                    continue
+            elif i == 2: # left
+                for pn in range(numpoints):
+                    x, y, z, _ = points[pn]
+                    if ((a1 * x + b1 * y + c1 * z - d1 >= 0) &
+                        (a2 * x + b2 * y + c2 * z - d2 <= 0) &
+                        (a3 * x + b3 * y + c3 * z - d3 < 0) & 
+                        (a4 * x + b4 * y + c4 * z - d4 >= 0)):
+                        leftmask[pn] = True
+                    else:
+                        continue
+                    continue
+            elif i == 3: # right
+                for pn in range(numpoints):
+                    x, y, z, _ = points[pn]
+                    if ((a1 * x + b1 * y + c1 * z - d1 <= 0) &
+                        (a2 * x + b2 * y + c2 * z - d2 >= 0) &
+                        (a3 * x + b3 * y + c3 * z - d3 >= 0) & 
+                        (a4 * x + b4 * y + c4 * z - d4 < 0)):
+                        rightmask[pn] = True
+                    else:
+                        continue
+                    continue
+            elif i == 4: # front
+                for pn in range(numpoints):
+                    x, y, z, _ = points[pn]
+                    if ((a1 * x + b1 * y + c1 * z - d1 <= 0) &
+                        (a2 * x + b2 * y + c2 * z - d2 >= 0) &
+                        (a3 * x + b3 * y + c3 * z - d3 >= 0) & 
+                        (a4 * x + b4 * y + c4 * z - d4 < 0)):
+                        frontmask[pn] = True
+                    else:
+                        continue
+                    continue
+            elif i == 5: # rear
+                for pn in range(numpoints):
+                    x, y, z, _ = points[pn]
+                    if ((a1 * x + b1 * y + c1 * z - d1 >= 0) &
+                        (a2 * x + b2 * y + c2 * z - d2 <= 0) &
+                        (a3 * x + b3 * y + c3 * z - d3 >= 0) & 
+                        (a4 * x + b4 * y + c4 * z - d4 < 0)):
+                        rearmask[pn] = True
+                    else:
+                        continue
+                    continue
+            continue
+        top = points[topmask]
+        bottom = points[bottommask]
+        left = points[leftmask]
+        right = points[rightmask]
+        front = points[frontmask]
+        rear = points[rearmask]
+        return top, bottom, left, right, front, rear
+
 class RandomPyramid(object):
-    def __init__(self, cfg, probability=0.5):
-        self.voxelshape = cfg.voxelshape
-        self.voxelsize = cfg.voxelsize
-        self.minX = cfg.minX
-        self.maxX = cfg.maxX
-        self.minY = cfg.minY
-        self.maxY = cfg.maxY
-        self.minZ = cfg.minZ
-        self.maxZ = cfg.maxZ
-        self.boundary = np.array([self.minX, self.maxX,
-                                  self.minY, self.maxY, self.minZ, self.maxZ], dtype=np.float32)
-        self.p = probability
+    def __init__(self, cfg, dropprob=0.5, sparsifyprob=0.5):
+        self.dropp = dropprob
+        self.sparsifyp = sparsifyprob
+        self.cornersequence = np.array([[8,0,1], [8,1,2], [8,2,3], [8,3,0], 
+                                       [8,0,4], [8,1,5], [8,2,6], [8,3,7]], dtype=np.int16)
+        self.planesequence = np.array([[0,1,2,3], [0,1,2,3], [1,3,4,7],
+                        [1,3,5,6], [0,2,4,5], [0,2,6,7]], dtype=np.int16)
 
     def __call__(self, points, labels):
-        if len(labels) == 1 or labels is None:
+        if labels is None or len(labels) == 1:
             return points, labels
-        return 0
+        numobject = len(labels)
+
+        # gen 6pyramid numpy
+        pyramidlist = []
+        for object in labels:
+            x, y, z = object.velox, object.veloy, object.veloz
+            z = z - object.h / 2
+            center = np.array([x, y, z]).reshape(1, 3)
+            corners = np.concatenate([object.velocorners3d, center], axis=0)
+            planes = PyramidUtils.compute_8plane_through_9corners(center, self.cornersequence)
+            t,b,L,R,f,r = PyramidUtils.divid_object_to_6pyramids(object.innerpoints, planes, self.planesequence)
+            pyramidlist.append([t,b,L,R,f,r])
+            continue
+
+        # random drop out
+        for num in range(numobject):
+            if labels[num].level == 3:
+                continue
+
+            if np.random.uniform(0, 1) < self.dropp:
+                idx = np.random.randint(0, 6)
+                empty = np.array((0, 4), dtype=np.float32)
+                pyramidlist[num][idx] = empty
+                continue
+            continue
+
+        # random swap
+        for num in range(numobject):
+            idx = np.random.randint(0, 6)
+            choicelist = [i for i in range(numobject)]
+            choicelist.remove(num)
+            choice = random.choice(choicelist)
+            tmp = pyramidlist[num][idx]
+            pyramidlist[choice][idx] = pyramidlist[num][idx]
+            pyramidlist[num][idx] = tmp
+            continue
+
+        # random sparsify
+        for num in range(numobject):
+            if labels[num].level == 3:
+                continue
+
+            if np.random.uniform(0, 1) < self.sparsifyp:
+                idx = np.random.randint(0, 6)
+                tmp = pyramidlist[num][idx]
+                if tmp.shape[0] == 0:
+                    continue
+                mask = np.random.uniform(0, 1, size=tmp.shape[0])
+                mask = (mask > 0.5)
+                pyramidlist[num][idx] = tmp[mask]
+            continue
+
+        # merge
+        for num, (t,b,L,R,f,r) in enumerate(pyramidlist):
+            print(t.shape)
+            print(b.shape)
+            print(L.shape)
+            print(R.shape)
+            print(f.shape)
+            print(r.shape)
+            labels[num].points = np.concatenate([t,b,L,R,f,r], axis=0)
+            continue
+
+        # modify scene
+        points.remove_object_innerpoints(labels)
+        points.add_object_innerpoints(labels)
+        return points, labels
