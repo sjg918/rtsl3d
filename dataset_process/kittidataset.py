@@ -9,6 +9,7 @@ _BASE_DIR = 'C:\Datasets/sample/'
 
 class KittiDataset(data.Dataset):
     def __init__(self, cfg, mode='train'):
+        self.cfg = cfg
         self.mode = mode
         with open(_BASE_DIR + 'train.txt') as f:
             self.lists = f.readlines()
@@ -34,7 +35,7 @@ class KittiDataset(data.Dataset):
             labels = self.read_label(_BASE_DIR + 'label/' + self.lists[id][:6] + '.txt', points, calib)
             Plist.append(points)
             Llist.append(labels)
-        
+
         points, labels, stat = self.randommosaic(Plist, Llist)
         ra, rx, ry = self.random_select_area(stat[:4]), stat[4], stat[5]
         if ra is not None:
@@ -42,19 +43,36 @@ class KittiDataset(data.Dataset):
                 id = random.randint(0, self.__len__() - 1)
                 points_ = self.read_velo(_BASE_DIR + 'velodyne(lidar)/' + self.lists[id][:6] + '.bin')
                 calib_  = self.read_calib(_BASE_DIR + 'calib/' + self.lists[id][:6] + '.txt')
-                labels_ = self.read_label(_BASE_DIR + 'label/' + self.lists[id][:6] + '.txt', points, calib)
+                labels_ = self.read_label(_BASE_DIR + 'label/' + self.lists[id][:6] + '.txt', points_, calib_)
                 labels_ = KittiObjectUtils.verify_object_inner_boundary(self.boundary, labels_)
                 if labels_ is not None:
                     break
                 continue
             points, labels = self.randommixup(points, labels, labels_, ra, rx, ry)
-        poitns, labels = self.randompyramid(points, labels)
+        #for object in labels:
+        #    print(object.velox,object.veloy,object.veloz)
+        #print('-------------------------------')
+
+        pts = KittiObjectUtils.compute_boundary_inner_points(self.boundary, points.points)
+        map = mkBVEmap(pts, labels, self.cfg)
+
+        cv2.imshow('gg', map)
+        cv2.waitKey(0)
+        print(points.points.shape)
+        points_, labels_ = self.randompyramid(points, labels)
+        print(points_.points.shape)
+        pts_ = KittiObjectUtils.compute_boundary_inner_points(self.boundary, points_.points)
+        map_ = mkBVEmap(pts_, labels_, self.cfg)
+
+        cv2.imshow('gg', map_)
+        cv2.waitKey(0)
+
+        df=df
         #print(points.points.shape)
         #df=df
         #points = self.pointroi(points)
         #voxels, coors, num_points_per_voxel = self.point2voxel(points)
-        print('kewkewkew')
-        df=df
+        
         return 0
 
     def read_velo(self, filepath):
@@ -71,8 +89,8 @@ class KittiDataset(data.Dataset):
         for o in objects:
             if o.cls_id == -1:
                 continue
-            elif o.level == 4:
-                continue
+            #elif o.level == 4:
+            #    continue 
             else:
                 olist.append(o)
         if len(olist) > 0:
