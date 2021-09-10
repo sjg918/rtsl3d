@@ -53,16 +53,16 @@ def mkBVEmap(points, labels, cfg):
     RGB_Map = np.transpose(RGB_Map, (1,2,0))
     map_ = RGB_Map.copy()
     for object in labels:
-        x1, y1 = object.velocorners3d[0, 0], object.velocorners3d[0, 1]
-        x2, y2 = object.velocorners3d[1, 0], object.velocorners3d[1, 1]
-        x3, y3 = object.velocorners3d[2, 0], object.velocorners3d[2, 1]
-        x4, y4 = object.velocorners3d[3, 0], object.velocorners3d[3, 1]
-        map_ = cv2.line(map_, ( int((y1 - minY) * 10), int(x1 * 10)), ( int((y2 - minY)* 10), int(x2 * 10)), (0,0,255),1)
-        map_ = cv2.line(map_, (int((y2 - minY) * 10), int(x2 * 10)), (int((y3 - minY)* 10), int(x3* 10)), (0,0,255),1)
-        map_ = cv2.line(map_, (int((y3 - minY) * 10), int(x3 * 10)), (int((y4 - minY)* 10), int(x4* 10)), (0,0,255),1)
-        map_ = cv2.line(map_, (int((y4 - minY) * 10), int(x4 * 10)), (int((y1 - minY)* 10), int(x1* 10)), (0,0,255),1)
+        #x1, y1 = object.velocorners3d[0, 0], object.velocorners3d[0, 1]
+        #x2, y2 = object.velocorners3d[1, 0], object.velocorners3d[1, 1]
+        #x3, y3 = object.velocorners3d[2, 0], object.velocorners3d[2, 1]
+        #x4, y4 = object.velocorners3d[3, 0], object.velocorners3d[3, 1]
+        #map_ = cv2.line(map_, ( int((y1 - minY) * 10), int(x1 * 10)), ( int((y2 - minY)* 10), int(x2 * 10)), (0,0,255),1)
+        #map_ = cv2.line(map_, (int((y2 - minY) * 10), int(x2 * 10)), (int((y3 - minY)* 10), int(x3* 10)), (0,0,255),1)
+        #map_ = cv2.line(map_, (int((y3 - minY) * 10), int(x3 * 10)), (int((y4 - minY)* 10), int(x4* 10)), (0,0,255),1)
+        #map_ = cv2.line(map_, (int((y4 - minY) * 10), int(x4 * 10)), (int((y1 - minY)* 10), int(x1* 10)), (0,0,255),1)
 
-        #x1, y1 = object.velox, object.veloy
-        #map_ = cv2.circle(map_, int((y1-minY)*10) )
+        x1, y1 = object.velox, object.veloy
+        map_ = cv2.circle(map_, (int(((y1-minY)*10)),int(x1 * 10)), 2, (0,0,255),2)
 
     return map_
