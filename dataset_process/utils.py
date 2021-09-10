@@ -128,17 +128,21 @@ class KittiObject(object):
         self.innerpoints[:, 1] = self.innerpoints[:, 1] + y
         self.innerpoints[:, 2] = self.innerpoints[:, 2] + z
         
-    def scale3d(self, scale):
+    def scale3d(self, scalex, scaley, scalez):
         # 상남자특) 카메라 값들 -> 고려안함
         # The values of the camera coordinate system are not considered.
-        self.h = self.h * scale
-        self.w = self.w * scale
-        self.l = self.l * scale
-        self.velox = self.velox * scale
-        self.veloy = self.veloy * scale
-        self.veloz = self.veloz * scale
-        self.velocorners3d = self.velocorners3d * scale
-        self.innerpoints[:, :3] = self.innerpoints[:, :3] * scale
+        self.h = self.h * scalex
+        self.w = self.w * scaley
+        self.l = self.l * scalez
+        self.velox = self.velox * scalex
+        self.veloy = self.veloy * scaley
+        self.veloz = self.veloz * scalez
+        self.velocorners3d[:, 0] = self.velocorners3d[:, 0] * scalex
+        self.velocorners3d[:, 1] = self.velocorners3d[:, 1] * scaley
+        self.velocorners3d[:, 2] = self.velocorners3d[:, 2] * scalez
+        self.innerpoints[:, 0] = self.innerpoints[:, 0] * scalex
+        self.innerpoints[:, 1] = self.innerpoints[:, 1] * scaley
+        self.innerpoints[:, 2] = self.innerpoints[:, 2] * scalez
 
     def filp3d(self):
         # 상남자특) 카메라 값들 -> 고려안함
@@ -887,11 +891,9 @@ class RandomPyramid(object):
             t,b,L,R,f,r = PyramidUtils.divid_object_to_6pyramids(object.innerpoints, planes, self.planesequence)
             pyramidlist.append([t,b,L,R,f,r])
             continue
-        아!!!!씨~이발~
-        print('bswap')
+        print('kew')
         for t,b,L,R,f,r in pyramidlist:
             print(t.shape, b.shape, L.shape, R.shape, f.shape, r.shape)
-
         # random swap
         for num in range(numobject):
             #idx = np.random.randint(0, 6)
@@ -899,41 +901,55 @@ class RandomPyramid(object):
             choicelist = [i for i in range(numobject)]
             choicelist.remove(num)
             choice = random.choice(choicelist)
-            print(choicelist)
-            print(choice)
             tmp = pyramidlist[num][idx]
             pyramidlist[num][idx] = pyramidlist[choice][idx]
             pyramidlist[choice][idx] = tmp
+
+            x1, y1, z1, ry1 = labels[num].velox, labels[num].veloy, labels[num].veloz, labels[num].ry
+            x2, y2, z2, ry2 = labels[choice].velox, labels[choice].veloy, labels[choice].veloz, labels[choice].ry
+            dx, dy, dz, dry = x2 - x1, y2 - y1, z2 - z1, ry2 - ry1
+            print(ry1, ry2, dry)
+            if pyramidlist[num][idx].shape[0] != 0:
+                pyramidlist[num][idx][:, 0] = pyramidlist[num][idx][:, 0] - dx
+                pyramidlist[num][idx][:, 1] = pyramidlist[num][idx][:, 1] - dy
+                pyramidlist[num][idx][:, 2] = pyramidlist[num][idx][:, 2] - dz
+                pyramidlist[num][idx][:, :3] = pyramidlist[num][idx][:, :3] @ KittiObjectUtils.rotz(dry)
+            if pyramidlist[choice][idx].shape[0] != 0:
+                pyramidlist[choice][idx][:, 0] = pyramidlist[choice][idx][:, 0] + dx
+                pyramidlist[choice][idx][:, 1] = pyramidlist[choice][idx][:, 1] + dy
+                pyramidlist[choice][idx][:, 2] = pyramidlist[choice][idx][:, 2] + dz
+                pyramidlist[choice][idx][:, :3] = pyramidlist[choice][idx][:, :3] @ KittiObjectUtils.rotz(-dry)
             continue
-        print('aswap')
+        print('kew')
         for t,b,L,R,f,r in pyramidlist:
             print(t.shape, b.shape, L.shape, R.shape, f.shape, r.shape)
-        # random dropout
-        for num in range(numobject):
-            if labels[num].level == 3:
-                continue
 
-            if np.random.uniform(0, 1) < self.dropp:
-                idx = np.random.randint(0, 6)
-                empty = np.zeros((0, 4), dtype=np.float32)
-                pyramidlist[num][idx] = empty
-                continue
-            continue
+        ## random dropout
+        #for num in range(numobject):
+        #    if labels[num].level == 3:
+        #        continue
 
-        # random sparsify
-        for num in range(numobject):
-            if labels[num].level == 3:
-                continue
+        #    if np.random.uniform(0, 1) < self.dropp:
+        #        idx = np.random.randint(0, 6)
+        #        empty = np.zeros((0, 4), dtype=np.float32)
+        #        pyramidlist[num][idx] = empty
+        #        continue
+        #    continue
 
-            if np.random.uniform(0, 1) < self.sparsifyp:
-                idx = np.random.randint(0, 6)
-                tmp = pyramidlist[num][idx]
-                if tmp.shape[0] == 0:
-                    continue
-                mask = np.random.uniform(0, 1, size=tmp.shape[0])
-                mask = (mask > 0.5)
-                pyramidlist[num][idx] = tmp[mask]
-            continue
+        ## random sparsify
+        #for num in range(numobject):
+        #    if labels[num].level == 3:
+        #        continue
+
+        #    if np.random.uniform(0, 1) < self.sparsifyp:
+        #        idx = np.random.randint(0, 6)
+        #        tmp = pyramidlist[num][idx]
+        #        if tmp.shape[0] == 0:
+        #            continue
+        #        mask = np.random.uniform(0, 1, size=tmp.shape[0])
+        #        mask = (mask > 0.5)
+        #        pyramidlist[num][idx] = tmp[mask]
+        #    continue
 
         # merge
         for num, (t,b,L,R,f,r) in enumerate(pyramidlist):
@@ -941,9 +957,7 @@ class RandomPyramid(object):
             continue
 
         # modify scene
-        print(points.points.shape)
         points.remove_object_innerpoints(labels)
-        print(points.points.shape)
+        points.points = np.zeros((10, 4), dtype=np.float32)
         points.add_object_innerpoints(labels)
-        print(points.points.shape)
         return points, labels
