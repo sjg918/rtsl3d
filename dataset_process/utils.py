@@ -255,24 +255,19 @@ class KittiObjectUtils(object):
     @staticmethod
     def verify_object_inner_boundary(boundary, kittiobjects):
         minX, maxX, minY, maxY, minZ, maxZ = boundary
-        vl = []
         if kittiobjects is None:
             return None
-        else:
-            for o in kittiobjects:
-                if ((o.velox > minX) & (o.velox < maxX) &
-                    (o.veloy > minY) & (o.veloy < maxY)):
-                    flag = True
-                else:
-                    flag = False
+        vl = []
+        for o in kittiobjects:
+            if ((o.velox > minX) & (o.velox < maxX) &
+                (o.veloy > minY) & (o.veloy < maxY)):
+                vl.append(o)
+            continue
 
-                if flag == True:
-                    vl.append(o)
-                continue
-            if len(vl) == 0:
-                return None
-            else:
-                return vl
+        if len(vl) == 0:
+            return None
+        else:
+            return vl
 
     @staticmethod
     def cehck_overlap_object_and_merge(kittiobjectlist):
@@ -664,7 +659,7 @@ class RandomMosaic(object):
                 continue
         else:
             pass
-
+        
         # remove outer points & object
         cnt = 0
         vlabels = []
@@ -685,7 +680,7 @@ class RandomMosaic(object):
             continue
 
         # check overlap object and merge
-        vkitti, stat = KittiObjectUtils.cehck_overlap_object_and_merge(labels)
+        vkitti, stat = KittiObjectUtils.cehck_overlap_object_and_merge(vlabels)
         
         # shift y-axis
         for scene in points:
@@ -723,12 +718,11 @@ class RandomMixup(object):
         elif ra == 3:
             minX, maxX, minY, maxY = rx, self.maxX, self.minY, ry+self.minY
         
-        cx = np.random.uniform(0.2, 0.8) * (maxX - minX)
-        cy = np.random.uniform(0.2, 0.8) * (maxY - minY)
+        cx = minX + np.random.uniform(0.2, 0.8) * (maxX - minX)
+        cy = minY + np.random.uniform(0.2, 0.8) * (maxY - minY)
         jumpguy = random.choice(labels_)
         shiftx, shifty = cx - jumpguy.velox, cy - jumpguy.veloy 
         jumpguy.shift3d(shiftx, shifty, 0)
-        
         points.remove_object_innerpoints([jumpguy])
         points.add_object_innerpoints([jumpguy])
         if labels is not None:
@@ -742,7 +736,7 @@ class PyramidUtils(object):
         pass
 
     @staticmethod
-    @numba.jit(nopython=True)
+    #@numba.jit(nopython=True)
     def compute_8plane_through_9corners(corners3d, cornersequence):
         """
         corners3d has 9 points. following order:
@@ -886,35 +880,44 @@ class RandomPyramid(object):
         pyramidlist = []
         for object in labels:
             x, y, z = object.velox, object.veloy, object.veloz
-            z = z - object.h / 2
+            z = z + object.h / 2
             center = np.array([x, y, z]).reshape(1, 3)
             corners = np.concatenate([object.velocorners3d, center], axis=0)
-            planes = PyramidUtils.compute_8plane_through_9corners(center, self.cornersequence)
+            planes = PyramidUtils.compute_8plane_through_9corners(corners, self.cornersequence)
             t,b,L,R,f,r = PyramidUtils.divid_object_to_6pyramids(object.innerpoints, planes, self.planesequence)
             pyramidlist.append([t,b,L,R,f,r])
             continue
+        아!!!!씨~이발~
+        print('bswap')
+        for t,b,L,R,f,r in pyramidlist:
+            print(t.shape, b.shape, L.shape, R.shape, f.shape, r.shape)
 
-        # random drop out
+        # random swap
+        for num in range(numobject):
+            #idx = np.random.randint(0, 6)
+            idx = 4
+            choicelist = [i for i in range(numobject)]
+            choicelist.remove(num)
+            choice = random.choice(choicelist)
+            print(choicelist)
+            print(choice)
+            tmp = pyramidlist[num][idx]
+            pyramidlist[num][idx] = pyramidlist[choice][idx]
+            pyramidlist[choice][idx] = tmp
+            continue
+        print('aswap')
+        for t,b,L,R,f,r in pyramidlist:
+            print(t.shape, b.shape, L.shape, R.shape, f.shape, r.shape)
+        # random dropout
         for num in range(numobject):
             if labels[num].level == 3:
                 continue
 
             if np.random.uniform(0, 1) < self.dropp:
                 idx = np.random.randint(0, 6)
-                empty = np.array((0, 4), dtype=np.float32)
+                empty = np.zeros((0, 4), dtype=np.float32)
                 pyramidlist[num][idx] = empty
                 continue
-            continue
-
-        # random swap
-        for num in range(numobject):
-            idx = np.random.randint(0, 6)
-            choicelist = [i for i in range(numobject)]
-            choicelist.remove(num)
-            choice = random.choice(choicelist)
-            tmp = pyramidlist[num][idx]
-            pyramidlist[choice][idx] = pyramidlist[num][idx]
-            pyramidlist[num][idx] = tmp
             continue
 
         # random sparsify
@@ -934,16 +937,13 @@ class RandomPyramid(object):
 
         # merge
         for num, (t,b,L,R,f,r) in enumerate(pyramidlist):
-            print(t.shape)
-            print(b.shape)
-            print(L.shape)
-            print(R.shape)
-            print(f.shape)
-            print(r.shape)
-            labels[num].points = np.concatenate([t,b,L,R,f,r], axis=0)
+            labels[num].innerpoints = np.concatenate([t,b,L,R,f,r], axis=0)
             continue
 
         # modify scene
+        print(points.points.shape)
         points.remove_object_innerpoints(labels)
+        print(points.points.shape)
         points.add_object_innerpoints(labels)
+        print(points.points.shape)
         return points, labels
