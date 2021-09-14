@@ -26,27 +26,12 @@ class KittiScene(object):
         self.points[:, 0] = self.points[:, 0] + x
         self.points[:, 1] = self.points[:, 1] + y
         self.points[:, 2] = self.points[:, 2] + z
-        
-    def scale3d(self, scale, kittiobjects=None):
-        if kittiobjects is not None:
-            for object in kittiobjects:
-                object.scale3d(x, y, z)
-        self.points[:, :3] = self.points[:, :3] * scale
 
-    def filp3d(self, kittiobjects=None):
+    def flip3d(self, kittiobjects=None):
         if kittiobjects is not None:
             for object in kittiobjects:
-                object.filp3d()
+                object.flip3d(scene=True)
         self.points[:, 1] = - self.points[:, 1]
-
-    def rotate3d(self, angle, kittiobjects=None):
-        if kittiobjects is not None:
-            for object in kittiobjects:
-                object.rotate3d(angle)
-        rot_sin = np.sin(angle)
-        rot_cos = np.cos(angle)
-        rot_mat_T = np.array([[rot_cos, -rot_sin, 0], [rot_sin, rot_cos, 0], [0, 0, 1]],dtype=np.float32)
-        self.points[:, :3] = self.points[:, :3] @ rot_mat_T
 
     def remove_object_innerpoints(self, kittiobjects):
         if kittiobjects is None:
@@ -116,8 +101,6 @@ class KittiObject(object):
         return np.array([minX, maxX, minY, maxY, minZ, maxZ], dtype=np.float32)
 
     def shift3d(self, x, y, z):
-        # 상남자특) 카메라 값들 -> 고려안함
-        # The values of the camera coordinate system are not considered. 
         self.velox = self.velox + x
         self.veloy = self.veloy + y
         self.veloz = self.veloz + z
@@ -129,42 +112,68 @@ class KittiObject(object):
         self.innerpoints[:, 2] = self.innerpoints[:, 2] + z
         
     def scale3d(self, scalex, scaley, scalez):
-        # 상남자특) 카메라 값들 -> 고려안함
-        # The values of the camera coordinate system are not considered.
         self.h = self.h * scalex
         self.w = self.w * scaley
         self.l = self.l * scalez
-        self.velox = self.velox * scalex
-        self.veloy = self.veloy * scaley
-        self.veloz = self.veloz * scalez
+        
+        self.innerpoints[:, 0] = self.innerpoints[:, 0] - self.velox
+        self.innerpoints[:, 1] = self.innerpoints[:, 1] - self.veloy
+        self.innerpoints[:, 2] = self.innerpoints[:, 2] - self.veloz
+        self.velocorners3d[:, 0] = self.velocorners3d[:, 0] - self.velox
+        self.velocorners3d[:, 1] = self.velocorners3d[:, 1] - self.veloy
+        self.velocorners3d[:, 2] = self.velocorners3d[:, 2] - self.veloz
         self.velocorners3d[:, 0] = self.velocorners3d[:, 0] * scalex
         self.velocorners3d[:, 1] = self.velocorners3d[:, 1] * scaley
         self.velocorners3d[:, 2] = self.velocorners3d[:, 2] * scalez
         self.innerpoints[:, 0] = self.innerpoints[:, 0] * scalex
         self.innerpoints[:, 1] = self.innerpoints[:, 1] * scaley
         self.innerpoints[:, 2] = self.innerpoints[:, 2] * scalez
+        self.innerpoints[:, 0] = self.innerpoints[:, 0] + self.velox
+        self.innerpoints[:, 1] = self.innerpoints[:, 1] + self.veloy
+        self.innerpoints[:, 2] = self.innerpoints[:, 2] + self.veloz
+        self.velocorners3d[:, 0] = self.velocorners3d[:, 0] + self.velox
+        self.velocorners3d[:, 1] = self.velocorners3d[:, 1] + self.veloy
+        self.velocorners3d[:, 2] = self.velocorners3d[:, 2] + self.veloz
 
-    def filp3d(self):
-        # 상남자특) 카메라 값들 -> 고려안함
-        # The values of the camera coordinate system are not considered.
-        self.veloy = - self.veloy
-        self.ry = - self.ry + np.pi
-        self.innerpoints[:, 1] = - self.innerpoints[:, 1]
+    def flip3d(self, scene=False):
+        if scene == True:
+            self.veloy = - self.veloy
+            self.ry = - self.ry + np.pi
+            self.velocorners3d[:, 1] = - self.velocorners3d[:, 1]
+            self.innerpoints[:, 1] = - self.innerpoints[:, 1]
+        else:
+            self.innerpoints[:, 0] = self.innerpoints[:, 0] - self.velox
+            self.innerpoints[:, 1] = self.innerpoints[:, 1] - self.veloy
+            self.velocorners3d[:, 0] = self.velocorners3d[:, 0] - self.velox
+            self.velocorners3d[:, 1] = self.velocorners3d[:, 1] - self.veloy
+            self.innerpoints[:, :3] = self.innerpoints[:, :3] @ KittiObjectUtils.rotz(-self.ry)
+            self.innerpoints[:, 1] = - self.innerpoints[:, 1]
+            self.innerpoints[:, :3] = self.innerpoints[:, :3] @ KittiObjectUtils.rotz(self.ry)
+            self.velocorners3d[:, :3] = self.velocorners3d[:, :3] @ KittiObjectUtils.rotz(-self.ry)
+            self.velocorners3d[:, 1] = - self.velocorners3d[:, 1]
+            self.velocorners3d[:, :3] = self.velocorners3d[:, :3] @ KittiObjectUtils.rotz(self.ry)
+            self.innerpoints[:, 0] = self.innerpoints[:, 0] + self.velox
+            self.innerpoints[:, 1] = self.innerpoints[:, 1] + self.veloy
+            self.velocorners3d[:, 0] = self.velocorners3d[:, 0] + self.velox
+            self.velocorners3d[:, 1] = self.velocorners3d[:, 1] + self.veloy
+            KittiObjectUtils.swap2flip(self.velocorners3d, 0, 1)
+            KittiObjectUtils.swap2flip(self.velocorners3d, 2, 3)
+            KittiObjectUtils.swap2flip(self.velocorners3d, 4, 5)
+            KittiObjectUtils.swap2flip(self.velocorners3d, 6, 7)
+            self.ry = self.ry + np.pi
 
     def rotate3d(self, angle):
-        # 상남자특) 카메라 값들 -> 고려안함
-        # The values of the camera coordinate system are not considered.
-        rot_sin = np.sin(angle)
-        rot_cos = np.cos(angle)
-        rot_mat_T = np.array([[rot_cos, -rot_sin, 0], [rot_sin, rot_cos, 0], [0, 0, 1]],dtype=np.float32)
-        xyz = np.array([self.velox, self.veloy, self.veloz]).reshape(1, 3)
-        xyz = xyz @ rot_mat_T
-        self.velox = xyz[0]
-        self.veloy = xyz[1]
-        self.veloz = xyz[2]
-        self.velocorners3d = self.velocorners3d @ rot_mat_T
-        self.innerpoints[:, :3] = self.innerpoints[:, :3] @ rot_mat_T
-        self.ry = self.ry + angle
+        self.innerpoints[:, 0] = self.innerpoints[:, 0] - self.velox
+        self.innerpoints[:, 1] = self.innerpoints[:, 1] - self.veloy
+        self.velocorners3d[:, 0] = self.velocorners3d[:, 0] - self.velox
+        self.velocorners3d[:, 1] = self.velocorners3d[:, 1] - self.veloy
+        self.innerpoints[:, :3] = self.innerpoints[:, :3] @ KittiObjectUtils.rotz(angle)
+        self.velocorners3d[:, :3] = self.velocorners3d[:, :3] @ KittiObjectUtils.rotz(angle)
+        self.innerpoints[:, 0] = self.innerpoints[:, 0] + self.velox
+        self.innerpoints[:, 1] = self.innerpoints[:, 1] + self.veloy
+        self.velocorners3d[:, 0] = self.velocorners3d[:, 0] + self.velox
+        self.velocorners3d[:, 1] = self.velocorners3d[:, 1] + self.veloy
+        self.ry = self.ry - angle
 
     def get_numpy_kittiformat(self):
         return np.array([self.velox, self.veloy, self.veloz, self.w, self.l, self.h, self.ry], dtype=np.float32)
@@ -236,6 +245,13 @@ class KittiObjectUtils(object):
     def __init__(self):
         pass
     
+    @staticmethod
+    @numba.jit(nopython=True)
+    def swap2flip(corners, idx1, idx2):
+        tmp = corners[idx1].copy()
+        corners[idx1] = corners[idx2]
+        corners[idx2] = tmp
+
     @staticmethod
     @numba.jit(nopython=True)
     def remove_inner_points(boundary, points):
@@ -578,9 +594,8 @@ class Point2Voxel(object):
         voxelmap_shape = (self.voxelrange[3:] - self.voxelrange[:3]) / self.voxelsize
         voxelmap_shape = tuple(np.round(voxelmap_shape).astype(np.int32).tolist())
         voxelmap_shape = voxelmap_shape[::-1]
-
         num_points_per_voxel = np.zeros(shape=(self.maxvoxels,), dtype=np.int32)
-        voxels = np.zeros(shape=(self.maxvoxels, self.maxpoints, points.shape[-1]), dtype=points.dtype)
+        voxels = np.zeros(shape=(self.maxvoxels, self.maxpoints, points.shape[-1]), dtype=np.float32)
         coors = np.zeros(shape=(self.maxvoxels, 3), dtype=np.int32)
         coord_tovoxelidx = self.idxmat.copy()
         voxel_num = Point2Voxel.kernel(
@@ -640,6 +655,24 @@ class RandomMosaic(object):
         # remove object points
         for scene, object in zip(points, labels):
             scene.remove_object_innerpoints(object)
+            continue
+
+        # random horizontal flip
+        for scene, object in zip(points, labels):
+            if np.random.uniform(0, 1) < self.p:
+                scene.flip3d(object)
+            continue
+
+        # random object flip and rotate
+        for object in labels:
+            if (object is not None):
+                for o in object:
+                    if (np.random.uniform(0, 1) < self.p):
+                        o.flip3d(scene=False)
+                    if (np.random.uniform(0, 1) < self.p):
+                        angle = np.random.uniform(-np.pi /4 , np.pi /4)
+                        o.rotate3d(angle)
+                    continue
             continue
 
         # shift y-axis
@@ -740,7 +773,7 @@ class PyramidUtils(object):
         pass
 
     @staticmethod
-    #@numba.jit(nopython=True)
+    @numba.jit(nopython=True)
     def compute_8plane_through_9corners(corners3d, cornersequence):
         """
         corners3d has 9 points. following order:
@@ -813,47 +846,47 @@ class PyramidUtils(object):
                     else:
                         continue
                     continue
-            elif i == 2: # left
+            elif i == 2: # right
                 for pn in range(numpoints):
                     x, y, z, _ = points[pn]
                     if ((a1 * x + b1 * y + c1 * z - d1 >= 0) &
                         (a2 * x + b2 * y + c2 * z - d2 <= 0) &
                         (a3 * x + b3 * y + c3 * z - d3 < 0) & 
                         (a4 * x + b4 * y + c4 * z - d4 >= 0)):
-                        leftmask[pn] = True
-                    else:
-                        continue
-                    continue
-            elif i == 3: # right
-                for pn in range(numpoints):
-                    x, y, z, _ = points[pn]
-                    if ((a1 * x + b1 * y + c1 * z - d1 <= 0) &
-                        (a2 * x + b2 * y + c2 * z - d2 >= 0) &
-                        (a3 * x + b3 * y + c3 * z - d3 >= 0) & 
-                        (a4 * x + b4 * y + c4 * z - d4 < 0)):
                         rightmask[pn] = True
                     else:
                         continue
                     continue
-            elif i == 4: # front
+            elif i == 3: # left
                 for pn in range(numpoints):
                     x, y, z, _ = points[pn]
                     if ((a1 * x + b1 * y + c1 * z - d1 <= 0) &
                         (a2 * x + b2 * y + c2 * z - d2 >= 0) &
                         (a3 * x + b3 * y + c3 * z - d3 >= 0) & 
                         (a4 * x + b4 * y + c4 * z - d4 < 0)):
-                        frontmask[pn] = True
+                        leftmask[pn] = True
                     else:
                         continue
                     continue
-            elif i == 5: # rear
+            elif i == 4: # rear
+                for pn in range(numpoints):
+                    x, y, z, _ = points[pn]
+                    if ((a1 * x + b1 * y + c1 * z - d1 <= 0) &
+                        (a2 * x + b2 * y + c2 * z - d2 >= 0) &
+                        (a3 * x + b3 * y + c3 * z - d3 >= 0) & 
+                        (a4 * x + b4 * y + c4 * z - d4 < 0)):
+                        rearmask[pn] = True
+                    else:
+                        continue
+                    continue
+            elif i == 5: # front
                 for pn in range(numpoints):
                     x, y, z, _ = points[pn]
                     if ((a1 * x + b1 * y + c1 * z - d1 >= 0) &
                         (a2 * x + b2 * y + c2 * z - d2 <= 0) &
                         (a3 * x + b3 * y + c3 * z - d3 >= 0) & 
                         (a4 * x + b4 * y + c4 * z - d4 < 0)):
-                        rearmask[pn] = True
+                        frontmask[pn] = True
                     else:
                         continue
                     continue
@@ -891,13 +924,14 @@ class RandomPyramid(object):
             t,b,L,R,f,r = PyramidUtils.divid_object_to_6pyramids(object.innerpoints, planes, self.planesequence)
             pyramidlist.append([t,b,L,R,f,r])
             continue
-        print('kew')
-        for t,b,L,R,f,r in pyramidlist:
-            print(t.shape, b.shape, L.shape, R.shape, f.shape, r.shape)
+
         # random swap
-        for num in range(numobject):
-            #idx = np.random.randint(0, 6)
-            idx = 4
+        if numobject < 2:
+            pass
+        else:
+        #for num in range(numobject):
+            num = np.random.randint(0, numobject)
+            idx = np.random.randint(0, 6)
             choicelist = [i for i in range(numobject)]
             choicelist.remove(num)
             choice = random.choice(choicelist)
@@ -906,23 +940,37 @@ class RandomPyramid(object):
             pyramidlist[choice][idx] = tmp
 
             x1, y1, z1, ry1 = labels[num].velox, labels[num].veloy, labels[num].veloz, labels[num].ry
+            l1, w1, h1 = labels[num].l, labels[num].w, labels[num].h
             x2, y2, z2, ry2 = labels[choice].velox, labels[choice].veloy, labels[choice].veloz, labels[choice].ry
+            l2, w2, h2 = labels[choice].l, labels[choice].w, labels[choice].h
             dx, dy, dz, dry = x2 - x1, y2 - y1, z2 - z1, ry2 - ry1
-            print(ry1, ry2, dry)
+            dl, dw, dh = l2 / l1, w2 / w1, h2 / h1
             if pyramidlist[num][idx].shape[0] != 0:
                 pyramidlist[num][idx][:, 0] = pyramidlist[num][idx][:, 0] - dx
                 pyramidlist[num][idx][:, 1] = pyramidlist[num][idx][:, 1] - dy
                 pyramidlist[num][idx][:, 2] = pyramidlist[num][idx][:, 2] - dz
+
+                pyramidlist[num][idx][:, 0] = pyramidlist[num][idx][:, 0] - x1
+                pyramidlist[num][idx][:, 1] = pyramidlist[num][idx][:, 1] - y1
+                pyramidlist[num][idx][:, 0] = pyramidlist[num][idx][:, 0] / dw
+                pyramidlist[num][idx][:, 1] = pyramidlist[num][idx][:, 1] / dl
+                pyramidlist[num][idx][:, 1] = pyramidlist[num][idx][:, 1] / dh
                 pyramidlist[num][idx][:, :3] = pyramidlist[num][idx][:, :3] @ KittiObjectUtils.rotz(dry)
+                pyramidlist[num][idx][:, 0] = pyramidlist[num][idx][:, 0] + x1
+                pyramidlist[num][idx][:, 1] = pyramidlist[num][idx][:, 1] + y1
             if pyramidlist[choice][idx].shape[0] != 0:
                 pyramidlist[choice][idx][:, 0] = pyramidlist[choice][idx][:, 0] + dx
                 pyramidlist[choice][idx][:, 1] = pyramidlist[choice][idx][:, 1] + dy
                 pyramidlist[choice][idx][:, 2] = pyramidlist[choice][idx][:, 2] + dz
+
+                pyramidlist[choice][idx][:, 0] = pyramidlist[choice][idx][:, 0] - x2
+                pyramidlist[choice][idx][:, 1] = pyramidlist[choice][idx][:, 1] - y2
+                pyramidlist[choice][idx][:, 0] = pyramidlist[choice][idx][:, 0] * dw
+                pyramidlist[choice][idx][:, 1] = pyramidlist[choice][idx][:, 1] * dl
+                pyramidlist[choice][idx][:, 2] = pyramidlist[choice][idx][:, 2] * dh
                 pyramidlist[choice][idx][:, :3] = pyramidlist[choice][idx][:, :3] @ KittiObjectUtils.rotz(-dry)
-            continue
-        print('kew')
-        for t,b,L,R,f,r in pyramidlist:
-            print(t.shape, b.shape, L.shape, R.shape, f.shape, r.shape)
+                pyramidlist[choice][idx][:, 0] = pyramidlist[choice][idx][:, 0] + x2
+                pyramidlist[choice][idx][:, 1] = pyramidlist[choice][idx][:, 1] + y2
 
         ## random dropout
         #for num in range(numobject):
@@ -958,6 +1006,5 @@ class RandomPyramid(object):
 
         # modify scene
         points.remove_object_innerpoints(labels)
-        points.points = np.zeros((10, 4), dtype=np.float32)
         points.add_object_innerpoints(labels)
         return points, labels
