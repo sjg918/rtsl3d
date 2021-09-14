@@ -42,19 +42,22 @@ class VoxelFeatureExtractor(nn.Module):
 
     def get_paddings_indicator(self, actual_num, max_num, axis=0):
         actual_num = torch.unsqueeze(actual_num, axis + 1)
+        print(actual_num.shape)
         # tiled_actual_num: [N, M, 1]
         max_num_shape = [1] * len(actual_num.shape)
         max_num_shape[axis + 1] = -1
+        print(max_num_shape)
         max_num = torch.arange(max_num, dtype=torch.long, device=actual_num.device).view(max_num_shape)
         paddings_indicator = actual_num.int() > max_num
         # paddings_indicator shape: [batch_size, max_num]
+        print(paddings_indicator.shape)
         return paddings_indicator
 
     def voxel2bev(self, voxels, coors, max_voxels=40, num_features=4):
         bevs = torch.zeros((voxels.shape[0], max_voxels, num_features), dtype=torch.float32, device=voxels.device)
         bevcoors = torch.zeros((voxels.shape[0], 2), dtype=torch.long, device=voxels.device)
-        num_voxels_per_bev = torch.zeros((voxels.shape[0], 1), dtype=torch.long, device=voxels.device)
-
+        num_voxels_per_bev = torch.zeros((voxels.shape[0]), dtype=torch.long, device=voxels.device)
+        print('num_voxel', num_voxels_per_bev.shape)
         N = voxels.shape[0]
         ndim = 2
         ndim_minus_1 = ndim - 1
@@ -73,9 +76,11 @@ class VoxelFeatureExtractor(nn.Module):
             bevs[bevidx, num.to(torch.long)] =  voxels[i]
             num_voxels_per_bev[bevidx] += 1
             continue
+        print('num_voxel', num_voxels_per_bev.shape)
         bevs = bevs[:bev_num]
         bevcoors = bevcoors[:bev_num]
         num_voxels_per_bev = num_voxels_per_bev[:bev_num]
+        print('num_voxel', num_voxels_per_bev.shape)
         self.idxmat = self.idxmat * 0 + 65535
         return bevs, bevcoors, num_voxels_per_bev
 
@@ -86,7 +91,7 @@ class VoxelFeatureExtractor(nn.Module):
         voxel_per_points = features.shape[1]
 
         mask = self.get_paddings_indicator(num_voxels, voxel_per_points, axis=0)
-        mask = torch.unsqueeze(mask, -1).to(torch.float32)
+        mask = mask.unsqueeze(-1).to(torch.float32)
         
         x = self.vfe1(features)
         x *= mask
@@ -101,8 +106,8 @@ class VoxelFeatureExtractor(nn.Module):
         bevs, bevcoors, num_voxels_per_bev = self.voxel2bev(voxelwise, coors, self.voxelshape[0], 64)
         bevs_count = bevs.shape[1]
         mask = self.get_paddings_indicator(num_voxels_per_bev, bevs_count, axis=0)
-        mask = mask.to(torch.float32)
-            
+        mask = mask.unsqueeze(-1).to(torch.float32)
+        
         x = self.vfe3(bevs)
         x *= mask
         x = self.linear2(x)
