@@ -8,17 +8,16 @@ from models.back import VoxelFeatureExtractor
 
 kew = KittiDataset(cfg)
 back = VoxelFeatureExtractor(4, cfg.voxelshape)
+test = torch.zeros((40, 720, 600))
 for i in range(len(kew)):
     voxels, coors, num_points_per_voxel = kew[i]
     voxels = torch.from_numpy(voxels)
     coors = torch.from_numpy(coors)
     num_points_per_voxel = torch.from_numpy(num_points_per_voxel)
-    print(voxels.shape, coors.shape, num_points_per_voxel.shape)
 
-    mask = coors
-
-    df=df
-    kew = back(voxels, coors, num_points_per_voxel)
-    print(kew.shape)
-    #voxels, coors, num_points_per_voxel = kew[i]
-    #print(voxels.shape)
+    print(coors[:, 0].max())
+    print(coors[:, 1].max())
+    print(coors[:, 2].max())
+    
+    #rqt = back(voxels, coors, num_points_per_voxel)
+    #print(rqt.shape)
