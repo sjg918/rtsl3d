@@ -1,9 +1,11 @@
 
 import torch.utils.data as data
 from .utils import *
+from .visual import mkBVEmap
 
 import os
 import numpy as np
+import cv2
 
 _BASE_DIR = 'C:\Datasets/sample/'
 
@@ -49,31 +51,17 @@ class KittiDataset(data.Dataset):
                     break
                 continue
             points, labels = self.randommixup(points, labels, labels_, ra, rx, ry)
-        #for object in labels:
-        #    print(object.velox,object.veloy,object.veloz)
-        #print('-------------------------------')
-
-        pts = KittiObjectUtils.compute_boundary_inner_points(self.boundary, points.points)
-        map = mkBVEmap(pts, labels, self.cfg)
-
-        cv2.imshow('gg', map)
-        cv2.waitKey(0)
-        print(points.points.shape)
         points_, labels_ = self.randompyramid(points, labels)
-        print(points_.points.shape)
-        pts_ = KittiObjectUtils.compute_boundary_inner_points(self.boundary, points_.points)
-        map_ = mkBVEmap(pts_, labels_, self.cfg)
 
-        cv2.imshow('gg', map_)
-        cv2.waitKey(0)
+        #pts_ = KittiObjectUtils.compute_boundary_inner_points(self.boundary, points_.points)
+        #map_ = mkBVEmap(pts_, labels_, self.cfg)
 
-        df=df
-        #print(points.points.shape)
-        #df=df
-        #points = self.pointroi(points)
-        #voxels, coors, num_points_per_voxel = self.point2voxel(points)
-        
-        return 0
+        #cv2.imshow('gg', map_)
+        #cv2.waitKey(0)
+
+        points_ = KittiObjectUtils.compute_boundary_inner_points(self.boundary, points_.points)
+        voxels, coors, num_points_per_voxel = self.point2voxel(points_)
+        return voxels, coors, num_points_per_voxel
 
     def read_velo(self, filepath):
         points = KittiScene(filepath)
