@@ -3,21 +3,26 @@ from CFG import cfg
 from dataset_process.kittidataset import KittiDataset 
 
 import torch
+import numpy as np
 
 from models.back import VoxelFeatureExtractor
 
 kew = KittiDataset(cfg)
-back = VoxelFeatureExtractor(4, cfg.voxelshape)
+back = VoxelFeatureExtractor(4, cfg.voxelshape).cuda()
 test = torch.zeros((40, 720, 600))
 for i in range(len(kew)):
-    voxels, coors, num_points_per_voxel = kew[i]
+    voxels, coors, num_voxels = kew[i]
+
     voxels = torch.from_numpy(voxels)
     coors = torch.from_numpy(coors)
-    num_points_per_voxel = torch.from_numpy(num_points_per_voxel)
+    num_voxels = torch.from_numpy(num_voxels)
 
-    print(coors[:, 0].max())
-    print(coors[:, 1].max())
-    print(coors[:, 2].max())
-    
-    #rqt = back(voxels, coors, num_points_per_voxel)
-    #print(rqt.shape)
+    points_mean = voxels[:, :, :3].sum(dim=1, keepdim=True) / num_voxels.to(torch.float32).view(-1, 1, 1)
+    features_relative = voxels[:, :, :3] - points_mean
+    voxels = torch.cat([voxels, features_relative], dim=-1)
+
+    voxels = voxels.to('cuda')
+
+    rqt = back(voxels, coors, num_voxels)
+    back.zero_grad()
+    print(rqt.shape)
