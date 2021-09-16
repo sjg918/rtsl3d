@@ -545,23 +545,22 @@ class Calibration(object):
 
         return boxes, boxes_corner
 
-class VoxelGeneratorUtils(object):
+class VoxelGenerateUtils(object):
     # refer
     # https://github.com/Vegeta2020/SE-SSD
     def __init__(self, cfg):
         self.voxelsize = np.array(cfg.voxelsize)
         self.voxelrange = np.array(cfg.voxelrange)
         self.voxelshape = cfg.voxelshape
-        self.p2v_maxpoints = cfg.maxpoints
-        self.p2v_maxvoxels = cfg.maxvoxels
+        self.p2v_maxpoints = cfg.p2v_maxpoints
+        self.p2v_maxvoxels = cfg.p2v_maxvoxels
         self.p2v_idxmat = 65535 * np.ones((self.voxelshape), dtype=np.uint16)
 
         self.bevsize = cfg.bevsize
-        self.bevmulti = (int(self.bevsize[0] / self.voxelsize[1]), int(self.bevsize[1] / self.voxelsize[2]))
-        self.bevshape = (voxelshape[1]//self.bevmulti[0], voxelshape[2]//self.bevmulti[1])
+        self.bevmulti = cfg.bevmulti
+        self.bevshape = cfg.bevshape
+        self.v2b_maxvoxels = cfg.v2b_maxvoxels
         self.v2b_idxmat = 65535 * np.ones((self.bevshape), dtype=np.uint16)
-        self.v2b_maxvoxels = voxelshape[0] *\
-           int(self.bevsize[0] / self.voxelsize[1]) * int(self.bevsize[1] / self.voxelsize[2])
         self.voxelwise_channels = cfg.back_voxelwise_channels
 
     @staticmethod
@@ -574,8 +573,8 @@ class VoxelGeneratorUtils(object):
         ndim = 3
         idxtup = (2, 1, 0)
         grid_size = (coors_range[3:] - coors_range[:3]) / voxel_size
-        grid_size = np.round(grid_size, 0, grid_size).astype(np.long)
-        coor = np.zeros(shape=(3,), dtype=np.long)
+        grid_size = np.round(grid_size, 0, grid_size).astype(np.int64)
+        coor = np.zeros(shape=(3,), dtype=np.int64)
         voxel_num = 0
         for i in range(N):
             for j in range(ndim):
@@ -602,10 +601,10 @@ class VoxelGeneratorUtils(object):
         voxelmap_shape = (self.voxelrange[3:] - self.voxelrange[:3]) / self.voxelsize
         voxelmap_shape = tuple(np.round(voxelmap_shape).astype(np.long).tolist())
         voxelmap_shape = voxelmap_shape[::-1]
-        num_points_per_voxel = np.zeros(shape=(self.p2v_maxvoxels,), dtype=np.int32)
+        num_points_per_voxel = np.zeros(shape=(self.p2v_maxvoxels,), dtype=np.long)
         voxels = np.zeros(shape=(self.p2v_maxvoxels, self.p2v_maxpoints, points.shape[-1]), dtype=np.float32)
         coors = np.zeros(shape=(self.p2v_maxvoxels, 3), dtype=np.long)
-        voxel_num = VoxelGenerator.point2voxel_kernel(
+        voxel_num = VoxelGenerateUtils.point2voxel_kernel(
             points, self.voxelsize, self.voxelrange, num_points_per_voxel,
             self.p2v_idxmat, voxels, coors, self.p2v_maxpoints, self.p2v_maxvoxels,)
         coors = coors[:voxel_num]
@@ -614,51 +613,51 @@ class VoxelGeneratorUtils(object):
         self.p2v_idxmat = self.p2v_idxmat * 0 + 65535
         return voxels, coors, num_points_per_voxel
 
-    def get_paddings_indicator(self, actual_num, max_num, axis=0):
-        actual_num = torch.unsqueeze(actual_num, axis + 1)
-        # tiled_actual_num: [N, M, 1]
-        max_num_shape = [1] * len(actual_num.shape)
-        max_num_shape[axis + 1] = -1
-        max_num = torch.arange(max_num, dtype=torch.long, device=actual_num.device).view(max_num_shape)
-        paddings_indicator = actual_num.int() > max_num
-        # paddings_indicator shape: [batch_size, max_num]
+    @staticmethod
+    @numba.jit(nopython=True)
+    def paddingmask_kernel(num_voxel, max_num):
+        actual_num = np.expand_dims(num_voxel, axis=1)
+        max_num = np.arange(max_num, dtype=np.int64).reshape(1, max_num)
+        paddings_indicator = actual_num.astype(np.int64) > max_num
         return paddings_indicator
 
     @staticmethod
     @numba.jit(nopython=True)
     def voxel2bev_kernel(
-        voxels, coors, bevsidx, bevcoors, num_voxels_per_bev,
-        v2b_idxmat, bevshape, bevmulti):
-        
-        N = voxels.shape[0]
+        N, coors, bevsidx, bevcoors, num_voxels_per_bev,
+        v2b_idxmat, bevmulti):
+
         ndim = 2
         ndim_minus_1 = ndim - 1
-        coor = np.zeros((2, 1), dtype=np.long)
-        bev_num = np.zeros((1), dtype=np.long)
+        coorx = 0
+        coory = 0
+        #coor = np.zeros((2), dtype=np.int64)
+        bev_num = 0
 
         for i in range(N):
-            coor[0], coor[1] = coors[i, 1] // bevmulti[0], coors[i, 2] // bevmulti[1]
-            bevidx = v2b_idxmat[coor[0], coor[1]]
+            coorx = coors[i, 1] // bevmulti[0]
+            coory = coors[i, 2] // bevmulti[1]
+            bevidx = v2b_idxmat[coorx, coory]
             if bevidx == 65535:
                 bevidx = bev_num
                 bev_num = bev_num + 1
-                v2b_idxmat[coor[0], coor[1]] = bevidx
-                bevcoors[bevidx, 0] = coor[0]
-                bevcoors[bevidx, 1] = coor[1]
-            num = num_voxels_[bevidx]
+                v2b_idxmat[coorx, coory] = bevidx
+                bevcoors[bevidx, 0] = coorx
+                bevcoors[bevidx, 1] = coory
+            num = num_voxels_per_bev[bevidx]
             bevsidx[bevidx, num] = i
-            num_voxels_[bevidx] += 1
+            num_voxels_per_bev[bevidx] += 1
             continue
         return bev_num
 
-    def voxel2bev(self, voxels, coors):
-        bevsidx = np.zeros((self.bevshape[0]*self.bevshape[1], self.v2b_maxvoxels   ), dtype=np.long)
+    def voxel2bev(self, N, coors):
+        bevsidx = np.zeros((self.bevshape[0]*self.bevshape[1], self.v2b_maxvoxels), dtype=np.long)
         bevcoors = np.zeros((self.bevshape[0]*self.bevshape[1], 2), dtype=np.long)
         num_voxels_per_bev = np.zeros((self.bevshape[0]*self.bevshape[1]), dtype=np.long)
-        bev_num = VoxelGenerator.voxel2bev_kernel(
-            voxels, coors, bevsidx, bevcoors, num_voxels_per_bev,
-            self.v2b_idxmat, self.bevshape, self.bevmulti)
-        bevsidx = bevs[:bev_num]
+        bevmulti = np.array(self.bevmulti, dtype=np.long)
+        bev_num = VoxelGenerateUtils.voxel2bev_kernel(
+            N, coors, bevsidx, bevcoors, num_voxels_per_bev, self.v2b_idxmat, bevmulti)
+        bevsidx = bevsidx[:bev_num]
         bevcoors = bevcoors[:bev_num]
         num_voxels_per_bev = num_voxels_per_bev[:bev_num]
         self.v2b_idxmat = self.v2b_idxmat * 0 + 65535
