@@ -4,6 +4,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+# refer
+# https://github.com/Vegeta2020/SE-SSD/
+
 class FELayer(nn.Module):
     def __init__(self, in_channels, out_channels, bias=False):
         super(FELayer, self).__init__()
@@ -34,20 +37,17 @@ class VFELayer(nn.Module):
         return concatenated
 
 class VoxelFeatureExtractor(nn.Module):
-    # from
-    # https://github.com/Vegeta2020/SE-SSD/
-    def __init__(self, in_channels, voxelshape, bevmerge=5):
+    def __init__(self, cfg):
         super(VoxelFeatureExtractor, self).__init__()
-        self.vfe1 = VFELayer(in_channels + 3, 16)
-        self.vfe2 = VFELayer(16, 64)
-        self.vfe3 = FELayer(64, 64)
-        self.vfe4 = FELayer(64, 64)
+        self.in_channels = cfg.back_in_channels
+        self.voxelwise_channels = cfg.back_voxelwise_channels
+        self.bevin_channels = cfg.v2b_maxvoxels
+        self.bev_channels = cfg.back_bev_channels
 
-        self.voxelshape = voxelshape
-        self.bevmerge = bevmerge
-        self.bevshape = (voxelshape[1]//self.bevmerge, voxelshape[2]//self.bevmerge)
-        self.idxmat = 65535 * torch.ones((self.bevshape[0], self.bevshape[1]), dtype=torch.long).detach()
-        self.bevin_channels = voxelshape[0] * bevmerge * bevmerge
+        self.vfe1 = VFELayer(self.in_channels, self.voxelwise_channels//4)
+        self.vfe2 = VFELayer(self.voxelwise_channels//4, self.voxelwise_channels)
+        self.vfe3 = FELayer(self.voxelwise_channels, self.voxelwise_channels)
+        self.vfe4 = FELayer(self.voxelwise_channels, self.voxelwise_channels)
 
         self.bfe1_01 = FELayer(self.bevin_channels, self.bevin_channels)
         self.bfe2_01 = FELayer(self.bevin_channels, 2)
@@ -83,57 +83,13 @@ class VoxelFeatureExtractor(nn.Module):
         self.bfe2_16 = FELayer(self.bevin_channels, 2)
 
         self.bfe3 = nn.Sequential(
-            nn.Linear(128, 128, bias=False),
-            nn.BatchNorm1d(128),
-            nn.Mish()
-            )
+            nn.Linear(self.bev_channels, self.bev_channels, bias=False),
+            nn.BatchNorm1d(self.bev_channels),
+            nn.Mish())
         self.bfe4 = nn.Sequential(
-            nn.Linear(128, 128, bias=False),
-            nn.BatchNorm1d(128),
-            nn.Mish()
-            )
-
-    def get_paddings_indicator(self, actual_num, max_num, axis=0):
-        actual_num = torch.unsqueeze(actual_num, axis + 1)
-        # tiled_actual_num: [N, M, 1]
-        max_num_shape = [1] * len(actual_num.shape)
-        max_num_shape[axis + 1] = -1
-        max_num = torch.arange(max_num, dtype=torch.long, device=actual_num.device).view(max_num_shape)
-        paddings_indicator = actual_num.int() > max_num
-        # paddings_indicator shape: [batch_size, max_num]
-        return paddings_indicator
-
-    def voxel2bev(self, voxels, coors, max_voxels=1000, num_features=64):
-        bevs = torch.zeros((self.bevshape[0]*self.bevshape[1], max_voxels, num_features), dtype=torch.float32, device=coors.device)
-        bevcoors = torch.zeros((self.bevshape[0]*self.bevshape[1], 2), dtype=torch.long, device=coors.device).detach()
-        num_voxels_ = torch.zeros((self.bevshape[0]*self.bevshape[1]), dtype=torch.long, device=coors.device).detach()
-        
-        N = voxels.shape[0]
-        ndim = 2
-        ndim_minus_1 = ndim - 1
-        coor = torch.zeros((2, 1), dtype=torch.long, device=coors.device).detach()
-        bev_num = torch.zeros((1), dtype=torch.long, device=coors.device).detach()
-
-        for i in range(N):
-            coor[0], coor[1] = coors[i, 1] // self.bevmerge, coors[i, 2] // self.bevmerge
-            bevidx = self.idxmat[coor[0], coor[1]]
-            if bevidx == 65535:
-                bevidx = bev_num
-                bev_num = bev_num + 1
-                self.idxmat[coor[0], coor[1]] = bevidx
-                bevcoors[bevidx, 0] = coor[0]
-                bevcoors[bevidx, 1] = coor[1]
-            num = num_voxels_[bevidx]
-            bevs[bevidx, num.to(torch.long)] =  voxels[i].to(coors.device)
-            num_voxels_[bevidx] += 1
-            continue
-        
-        bevs = bevs[:bev_num]
-        bevcoors = bevcoors[:bev_num]
-        num_voxels_ = num_voxels_[:bev_num]
-        
-        self.idxmat = self.idxmat * 0 + 65535
-        return bevs, bevcoors, num_voxels_
+            nn.Linear(self.bev_channels, self.bev_channels, bias=False),
+            nn.BatchNorm1d(self.bev_channels),
+            nn.Mish())
 
     def forward(self, features, coors, num_voxels):
         # step1.
@@ -145,16 +101,16 @@ class VoxelFeatureExtractor(nn.Module):
         x3 = self.vfe3(x2)
         x4 = self.vfe4(x3) * mask + x2
         voxelwise = torch.max(x4, dim=1)[0]
-        print('hi')
+        
         # step2.
         bevs, bevcoors, num_voxels_ = self.voxel2bev(voxelwise, coors, self.bevin_channels, 64)
         x0 = bevs.to(features.device).permute(0, 2, 1).contiguous()
-        print('hi')
+        
         # step3.
         bevs_per_voxels = bevs.shape[1]
         mask = self.get_paddings_indicator(num_voxels_, bevs_per_voxels, axis=0)
         mask = mask.unsqueeze(dim=1).to(torch.float32).to(features.device)
-        print('hi')
+        
         x1 = self.bfe1_01(x0[:, 0:4, :]) * mask
         x1 = self.bfe2_01(x1)
         x2 = self.bfe1_02(x0[:, 4:8, :]) * mask
@@ -191,11 +147,11 @@ class VoxelFeatureExtractor(nn.Module):
         x17 = torch.cat([x1,x2,x3,x4,x5,x6,x7,x8,
                          x9,x10,x11,x12,x13,x14,x15,x16], dim=-1)
         x17 = x17.view([x0.shape[0], 128]).contiguous()
-        print('hi')
+        
         # step4.
         x18 = self.bfe3(x17)
         x19 = self.bfe3(x18)
         bevmap = torch.zeros((self.bevshape[0], self.bevshape[1], 128), dtype=torch.float32, device=x17.device)
         bevmap[bevcoors[:, 0], bevcoors[:, 1]] = x19
-        print('hi')
+        
         return bevmap.permute(2, 1, 0).contiguous()
