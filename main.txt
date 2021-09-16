@@ -8,21 +8,20 @@ import numpy as np
 from models.back import VoxelFeatureExtractor
 
 kew = KittiDataset(cfg)
-back = VoxelFeatureExtractor(4, cfg.voxelshape).cuda()
+back = VoxelFeatureExtractor(cfg).cuda()
 test = torch.zeros((40, 720, 600))
 for i in range(len(kew)):
-    voxels, coors, num_voxels = kew[i]
+    voxels, voxelmask, bevsidx, bevcoors, bevmask, target = kew[i]
 
-    voxels = torch.from_numpy(voxels)
-    coors = torch.from_numpy(coors)
-    num_voxels = torch.from_numpy(num_voxels)
+    voxels = torch.from_numpy(voxels).to(torch.float32).cuda(0)
+    voxelmask = torch.from_numpy(voxelmask).unsqueeze(dim=-1).to(torch.float32).cuda(0)
+    bevsidx = torch.from_numpy(bevsidx).to(torch.long).cuda(0)
+    bevcoors = torch.from_numpy(bevcoors).to(torch.long).cuda(0)
+    bevmask = torch.from_numpy(bevmask).unsqueeze(dim=1).to(torch.float32).cuda(0)
 
-    points_mean = voxels[:, :, :3].sum(dim=1, keepdim=True) / num_voxels.to(torch.float32).view(-1, 1, 1)
-    features_relative = voxels[:, :, :3] - points_mean
-    voxels = torch.cat([voxels, features_relative], dim=-1)
+    print(voxels.shape)
+    print(bevsidx.shape)
 
-    voxels = voxels.to('cuda')
-
-    rqt = back(voxels, coors, num_voxels)
+    rqt = back(voxels, voxelmask, bevsidx, bevcoors, bevmask)
     back.zero_grad()
     print(rqt.shape)
