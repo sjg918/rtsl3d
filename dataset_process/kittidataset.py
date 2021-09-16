@@ -5,6 +5,7 @@ from .visual import mkBVEmap
 
 import os
 import numpy as np
+import torch
 import cv2
 
 _BASE_DIR = 'C:\Datasets/sample/'
@@ -15,7 +16,7 @@ class KittiDataset(data.Dataset):
         self.mode = mode
         with open(_BASE_DIR + 'train.txt') as f:
             self.lists = f.readlines()
-        self.point2voxel = Point2Voxel(cfg)
+        self.voxelgenerateutils = VoxelGenerateUtils(cfg)
         self.randommosaic = RandomMosaic(cfg)
         self.randommixup = RandomMixup(cfg)
         self.randompyramid = RandomPyramid(cfg)
@@ -60,8 +61,16 @@ class KittiDataset(data.Dataset):
         #cv2.waitKey(0)
 
         points_ = KittiObjectUtils.compute_boundary_inner_points(self.boundary, points_.points)
-        voxels, coors, num_points_per_voxel = self.point2voxel(points_)
-        return voxels, coors, num_points_per_voxel
+        voxels, coors, num_points_per_voxel = self.voxelgenerateutils.point2voxel(points_)
+        voxelmask = VoxelGenerateUtils.paddingmask_kernel(num_points_per_voxel, self.cfg.p2v_maxpoints)
+
+        points_mean =  np.sum(voxels[:, :, :3], axis=1, keepdims=True) / num_points_per_voxel.astype(np.float32).reshape(-1, 1, 1)
+        features_relative = voxels[:, :, :3] - points_mean
+        voxels = np.concatenate([voxels, features_relative], axis=-1)
+        bevsidx, bevcoors, num_voxels_per_bev = self.voxelgenerateutils.voxel2bev(voxels.shape[0], coors)
+        bevmask = VoxelGenerateUtils.paddingmask_kernel(num_voxels_per_bev, self.cfg.v2b_maxvoxels)
+        target = 0
+        return voxels, voxelmask, bevsidx, bevmask, target
 
     def read_velo(self, filepath):
         points = KittiScene(filepath)
@@ -96,3 +105,19 @@ class KittiDataset(data.Dataset):
                 idx.append(n)
             continue
         return random.choice(idx)
+    
+    @staticmethod
+    def collate_fn(batch, cuda_idx=0):
+        input = []
+        targets = []
+        for voxels, voxelmask, bevsidx, bevmask, target in batch:
+            inputdict = {}
+            inputdict['voxels'] = torch.from_numpy(voxels).to(torch.float32).cuda(cuda_idx)
+            inputdict['voxelmask'] = torch.from_numpy(voxelmask).unsqueeze(dim=-1).to(torch.float32).cuda(cuda_idx)
+            inputdict['bevsidx'] = torch.from_numpy(bevsidx).to(torch.float32).cuda(cuda_idx)
+            inputdict['bevmask'] = torch.from_numpy(bevmask).unsqueeze(dim=1).to(torch.float32).cuda(cuda_idx)
+            target = torch.from_numpy(target).unsqueeze(0).to(torch.float32)
+            input.append(inputdict)
+            continue
+        targets = torch.cat(targets, dim=0)
+        return input
