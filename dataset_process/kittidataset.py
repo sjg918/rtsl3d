@@ -67,7 +67,7 @@ class KittiDataset(data.Dataset):
         bevsidx, bevcoors, num_voxels_per_bev = self.voxelgenerateutils.voxel2bev(voxels.shape[0], coors)
         bevmask = VoxelGenerateUtils.paddingmask_kernel(num_voxels_per_bev, self.cfg.v2b_maxvoxels)
         target = 0
-        return voxels, voxelmask, bevsidx, bevmask, target
+        return voxels, voxelmask, bevsidx, bevcoors, bevmask, target
 
     def read_velo(self, filepath):
         points = KittiScene(filepath)
@@ -107,11 +107,12 @@ class KittiDataset(data.Dataset):
     def collate_fn(batch, cuda_idx=0):
         input = []
         targets = []
-        for voxels, voxelmask, bevsidx, bevmask, target in batch:
+        for voxels, voxelmask, bevsidx, bevcoors, bevmask, target in batch:
             inputdict = {}
             inputdict['voxels'] = torch.from_numpy(voxels).to(torch.float32).cuda(cuda_idx)
             inputdict['voxelmask'] = torch.from_numpy(voxelmask).unsqueeze(dim=-1).to(torch.float32).cuda(cuda_idx)
-            inputdict['bevsidx'] = torch.from_numpy(bevsidx).to(torch.float32).cuda(cuda_idx)
+            inputdict['bevsidx'] = torch.from_numpy(bevsidx).to(torch.long).cuda(cuda_idx)
+            inputdict['bevcoors'] = torch.from_numpy(bevcoors).to(torch.long).cuda(cuda_idx)
             inputdict['bevmask'] = torch.from_numpy(bevmask).unsqueeze(dim=1).to(torch.float32).cuda(cuda_idx)
             target = torch.from_numpy(target).unsqueeze(0).to(torch.float32)
             input.append(inputdict)
