@@ -63,10 +63,7 @@ class KittiDataset(data.Dataset):
         points_ = KittiObjectUtils.compute_boundary_inner_points(self.boundary, points_.points)
         voxels, coors, num_points_per_voxel = self.voxelgenerateutils.point2voxel(points_)
         voxelmask = VoxelGenerateUtils.paddingmask_kernel(num_points_per_voxel, self.cfg.p2v_maxpoints)
-
-        points_mean =  np.sum(voxels[:, :, :3], axis=1, keepdims=True) / num_points_per_voxel.astype(np.float32).reshape(-1, 1, 1)
-        features_relative = voxels[:, :, :3] - points_mean
-        voxels = np.concatenate([voxels, features_relative], axis=-1)
+        voxels = VoxelGenerateUtils.get_relative_feature(voxels, num_points_per_voxel)
         bevsidx, bevcoors, num_voxels_per_bev = self.voxelgenerateutils.voxel2bev(voxels.shape[0], coors)
         bevmask = VoxelGenerateUtils.paddingmask_kernel(num_voxels_per_bev, self.cfg.v2b_maxvoxels)
         target = 0
