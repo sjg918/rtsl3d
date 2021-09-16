@@ -622,6 +622,12 @@ class VoxelGenerateUtils(object):
         return paddings_indicator
 
     @staticmethod
+    def get_relative_feature(voxels, num_points_per_voxel):
+        points_mean =  np.sum(voxels[:, :, :3], axis=1, keepdims=True) / num_points_per_voxel.astype(np.float32).reshape(-1, 1, 1)
+        features_relative = voxels[:, :, :3] - points_mean
+        return np.concatenate((voxels, features_relative), axis=-1)
+
+    @staticmethod
     @numba.jit(nopython=True)
     def voxel2bev_kernel(
         N, coors, bevsidx, bevcoors, num_voxels_per_bev,
