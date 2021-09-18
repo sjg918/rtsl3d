@@ -8,90 +8,78 @@ import torch.nn.functional as F
 # https://github.com/Vegeta2020/SE-SSD/
 
 class FELayer(nn.Module):
-    def __init__(self, in_channels, out_channels, bias=False):
+    def __init__(self, in_channels, out_channels, activation, norm=True, bias=False):
         super(FELayer, self).__init__()
-        self.linear = nn.Linear(in_channels, out_channels, bias=bias)
-        self.norm = nn.BatchNorm1d(out_channels)
-        self.mish = nn.Mish()
-    def forward(self, input):
-        voxel_count = input.shape[1]
-        x = self.linear(input)
-        if len(input.shape) == 3:
-            x = self.norm(x.permute(0, 2, 1).contiguous()).permute(0, 2, 1).contiguous()
-        elif len(input.shape) == 2:
-            x = self.norm(x)
-        return self.mish(x)
+        self.layer = nn.ModuleList()
 
-class VFELayer(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super(VFELayer, self).__init__()
-        self.fe = FELayer(in_channels, out_channels//2)
+        self.layer.append(nn.Linear(in_channels, out_channels, bias=bias))
+        if norm:
+            self.layer.append(nn.LayerNorm(out_channels))
+        if activation == 'mish':
+            self.layer.append(nn.Mish())
+        elif activation == 'linear':
+            pass
 
-    def forward(self, input):
-        voxel_count = input.shape[1]
-        pointwise = self.fe(input)
-        # element wise max pool
-        aggregated = torch.max(pointwise, dim=1, keepdim=True)[0]
-        repeated = aggregated.repeat(1, voxel_count, 1)
-        concatenated = torch.cat([pointwise, repeated], dim=2)
-        return concatenated
+    def forward(self, x):
+        for l in self.layer:
+            x = l(x)
+        return x
+
+class PoorFELayer(nn.Module):
+    def __init__(self, in_points, in_channels, out_channels):
+        super(PoorFELayer, self).__init__()
+        self.in_points = in_points
+        self.out_channels = out_channels
+        self.fc1 = FELayer(in_points * in_channels, out_channels, 'mish')
+
+    def forward(self, x):
+        x1 = self.fc1(x.view(-1, self.in_points * self.in_channels).contiguous())
+        return x1
+
+class NormalFELayer(nn.Module):
+    def __init__(self, in_points, in_channels, out_channels):
+        super(NormalFELayer, self).__init__()
+        self.in_points = in_points
+        self.out_channels = out_channels
+        self.fc1 = FELayer(in_channels, out_channels, 'mish')
+        self.fc2 = FELayer(in_points * out_channels, out_channels, 'mish')
+
+    def forward(self, x):
+        x1 = self.fc1(x).view(-1, self.in_points * self.out_channels)
+        return self.fc2(x1)
+
+class RichFELayer(nn.Module):
+    def __init__(self, in_points, in_channels, out_channels):
+        super(RichFELayer, self).__init__()
+        self.in_points = in_points
+        self.out_channels = out_channels
+        self.fc1 = FELayer(in_channels, out_channels, 'mish')
+        self.fc2 = FELayer(out_channels, out_channels, 'mish')
+        self.fc3 = FELayer(in_points * out_channels, out_channels, 'mish')
+        self.fc4 = FELayer(out_channels, out_channels, 'mish')
+
+    def forward(self, x):
+        x1 = self.fc1(x)
+        x2 = self.fc2(x1).view(-1, self.in_points * self.out_channels)
+        x3 = self.fc3(x2)
+        return self.fc4(x1)
 
 class VoxelFeatureExtractor(nn.Module):
     def __init__(self, cfg):
         super(VoxelFeatureExtractor, self).__init__()
-        self.back_bev_init_shape = cfg.back_bev_init_shape
-        self.in_channels = cfg.back_in_channels
-        self.voxelwise_channels = cfg.back_voxelwise_channels
-        self.bevin_channels = cfg.back_bev_in_channels
-        self.bev_channels = cfg.back_bev_channels
-        self.bevshape = cfg.bevshape
+        ##self.back_bev_init_shape = cfg.back_bev_init_shape
+        #self.in_channels = cfg.back_in_channels
+        #self.voxelwise_channels = cfg.back_voxelwise_channels
+        #self.bevin_channels = cfg.back_bev_in_channels
+        ##self.bev_channels = cfg.back_bev_channels
+        #self.bevshape = cfg.bevshape
 
-        self.vfe1 = VFELayer(self.in_channels, self.voxelwise_channels//4)
-        self.vfe2 = VFELayer(self.voxelwise_channels//4, self.voxelwise_channels)
-        self.vfe3 = FELayer(self.voxelwise_channels, self.voxelwise_channels)
-        self.vfe4 = FELayer(self.voxelwise_channels, self.voxelwise_channels)
-
-        self.bfe1_01 = FELayer(self.bevin_channels, self.bevin_channels)
-        self.bfe2_01 = FELayer(self.bevin_channels, 2)
-        self.bfe1_02 = FELayer(self.bevin_channels, self.bevin_channels)
-        self.bfe2_02 = FELayer(self.bevin_channels, 2)
-        self.bfe1_03 = FELayer(self.bevin_channels, self.bevin_channels)
-        self.bfe2_03 = FELayer(self.bevin_channels, 2)
-        self.bfe1_04 = FELayer(self.bevin_channels, self.bevin_channels)
-        self.bfe2_04 = FELayer(self.bevin_channels, 2)
-        self.bfe1_05 = FELayer(self.bevin_channels, self.bevin_channels)
-        self.bfe2_05 = FELayer(self.bevin_channels, 2)
-        self.bfe1_06 = FELayer(self.bevin_channels, self.bevin_channels)
-        self.bfe2_06 = FELayer(self.bevin_channels, 2)
-        self.bfe1_07 = FELayer(self.bevin_channels, self.bevin_channels)
-        self.bfe2_07 = FELayer(self.bevin_channels, 2)
-        self.bfe1_08 = FELayer(self.bevin_channels, self.bevin_channels)
-        self.bfe2_08 = FELayer(self.bevin_channels, 2)
-        self.bfe1_09 = FELayer(self.bevin_channels, self.bevin_channels)
-        self.bfe2_09 = FELayer(self.bevin_channels, 2)
-        self.bfe1_10 = FELayer(self.bevin_channels, self.bevin_channels)
-        self.bfe2_10 = FELayer(self.bevin_channels, 2)
-        self.bfe1_11 = FELayer(self.bevin_channels, self.bevin_channels)
-        self.bfe2_11 = FELayer(self.bevin_channels, 2)
-        self.bfe1_12 = FELayer(self.bevin_channels, self.bevin_channels)
-        self.bfe2_12 = FELayer(self.bevin_channels, 2)
-        self.bfe1_13 = FELayer(self.bevin_channels, self.bevin_channels)
-        self.bfe2_13 = FELayer(self.bevin_channels, 2)
-        self.bfe1_14 = FELayer(self.bevin_channels, self.bevin_channels)
-        self.bfe2_14 = FELayer(self.bevin_channels, 2)
-        self.bfe1_15 = FELayer(self.bevin_channels, self.bevin_channels)
-        self.bfe2_15 = FELayer(self.bevin_channels, 2)
-        self.bfe1_16 = FELayer(self.bevin_channels, self.bevin_channels)
-        self.bfe2_16 = FELayer(self.bevin_channels, 2)
-
-        self.bfe3 = nn.Sequential(
-            nn.Linear(self.bev_channels, self.bev_channels, bias=False),
-            nn.BatchNorm1d(self.bev_channels),
-            nn.Mish())
-        self.bfe4 = nn.Sequential(
-            nn.Linear(self.bev_channels, self.bev_channels, bias=False),
-            nn.BatchNorm1d(self.bev_channels),
-            nn.Mish())
+        self.poorvfe = PoorFELayer(cfg.p2v_poor, cfg.back_in_channels, cfg.back_voxelwise_channels)
+        self.normvfe = NormalFELayer(cfg.p2v_maxpoints, cfg.back_voxelwise_channels, cfg.back_voxelwise_channels)
+        
+        self.poorbfe = PoorFELayer(cfg.v2b_poor, cfg.back_voxelwise_channels, cfg.back_bev_in_channels // 2)
+        self.normbfe = NormalFELayer(cfg.v2b_normal, cfg.back_voxelwise_channels, cfg.back_bev_in_channels)
+        self.richbfe = RichFELayer(cfg.v2b_maxvoxels, cfg.back_voxelwise_channels, cfg.back_bev_in_channels * 2)
 
     def forward(self, voxels, voxelmask, bevsidx, bevcoors, bevmask):
         # step1.
