@@ -628,10 +628,29 @@ class VoxelGenerateUtils(object):
         return np.concatenate((voxels, features_relative), axis=-1)
 
     @staticmethod
+    #@numba.jit(nopython=True)
+    def get_dist_and_div_voxels(voxels, coors, coors_re, num_points_per_voxel, voxelmask, poor_num):
+        points_dist = voxels[:, :, :3] - coors_re
+        voxels_dist = np.concatenate((voxels, points_dist), axis=2)
+        pn = voxelmask.sum(axis=1) <= poor_num
+        
+        poorvoxels = np.ascontiguousarray(voxels_dist[pn])
+        normvoxels = np.ascontiguousarray(voxels_dist[pn != True])
+        voxels_ = np.concatenate((poorvoxels, normvoxels), axis=0)
+        poorcoors = np.ascontiguousarray(coors[pn])
+        normcoors = np.ascontiguousarray(coors[pn != True])
+        coors_ = np.concatenate((poorcoors, normcoors), axis=0)
+
+        poornum_points_per_voxel = np.ascontiguousarray(num_points_per_voxel[pn])
+        normnum_points_per_voxel = np.ascontiguousarray(num_points_per_voxel[pn != True])
+        num_points_per_voxel_ = np.concatenate((poornum_points_per_voxel, normnum_points_per_voxel), axis=0)
+        return voxels_, coors_, num_points_per_voxel_
+
+    @staticmethod
     @numba.jit(nopython=True)
     def voxel2bev_kernel(
         N, coors, bevsidx, bevcoors, num_voxels_per_bev,
-        v2b_idxmat, bevmulti):
+        v2b_idxmat, bevmulti, max_voxels):
 
         ndim = 2
         ndim_minus_1 = ndim - 1
@@ -651,8 +670,10 @@ class VoxelGenerateUtils(object):
                 bevcoors[bevidx, 0] = coorx
                 bevcoors[bevidx, 1] = coory
             num = num_voxels_per_bev[bevidx]
-            bevsidx[bevidx, num] = i
-            num_voxels_per_bev[bevidx] += 1
+
+            if num < max_voxels:
+                bevsidx[bevidx, num] = i
+                num_voxels_per_bev[bevidx] += 1
             continue
         return bev_num
 
@@ -662,12 +683,29 @@ class VoxelGenerateUtils(object):
         num_voxels_per_bev = np.zeros((self.bevshape[0]*self.bevshape[1]), dtype=np.long)
         bevmulti = np.array(self.bevmulti, dtype=np.long)
         bev_num = VoxelGenerateUtils.voxel2bev_kernel(
-            N, coors, bevsidx, bevcoors, num_voxels_per_bev, self.v2b_idxmat, bevmulti)
+            N, coors, bevsidx, bevcoors, num_voxels_per_bev, self.v2b_idxmat, bevmulti, self.v2b_maxvoxels)
         bevsidx = bevsidx[:bev_num]
         bevcoors = bevcoors[:bev_num]
         num_voxels_per_bev = num_voxels_per_bev[:bev_num]
         self.v2b_idxmat = self.v2b_idxmat * 0 + 65535
         return bevsidx, bevcoors, num_voxels_per_bev
+
+    @staticmethod
+    @numba.jit(nopython=True)
+    def div_bevs(bevsidx, bevcoors, num_voxels_per_bev, bevmask, poor_num, norm_num):
+        a = poor_num < bevmask.sum(axis=1)
+        b = bevmask.sum(axis=1) <= norm_num
+        c = a & b
+        poor = np.where(a != True)
+        norm = np.where(c)
+        rich = np.where(b != True)
+        poorbevsidx = bevsidx[poor]
+        normbevsidx = bevsidx[norm]
+        richbevsidx = bevsidx[rich]
+        poorcoors = bevcoors[poor]
+        normcoors = bevcoors[norm]
+        richcoors = bevcoors[rich]
+        return poorbevsidx, normbevsidx, richbevsidx, poorcoors, normcoors, richcoors
 
 class RandomMosaic(object):
     def __init__(self, cfg, probability=0.5):
