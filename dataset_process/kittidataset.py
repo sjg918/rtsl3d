@@ -63,11 +63,16 @@ class KittiDataset(data.Dataset):
         points_ = KittiObjectUtils.compute_boundary_inner_points(self.boundary, points_.points)
         voxels, coors, num_points_per_voxel = self.voxelgenerateutils.point2voxel(points_)
         voxelmask = VoxelGenerateUtils.paddingmask_kernel(num_points_per_voxel, self.cfg.p2v_maxpoints)
-        voxels = VoxelGenerateUtils.get_relative_feature(voxels, num_points_per_voxel)
-        bevsidx, bevcoors, num_voxels_per_bev = self.voxelgenerateutils.voxel2bev(voxels.shape[0], coors)
+        coors_re = coors.repeat(voxels.shape[1], axis=0).reshape(voxels.shape[0], voxels.shape[1], 3)
+        voxels_, coors_, num_points_per_voxel_ =\
+           VoxelGenerateUtils.get_dist_and_div_voxels(voxels, coors, coors_re, num_points_per_voxel, voxelmask, self.cfg.p2v_poor)
+        voxelmask_ = VoxelGenerateUtils.paddingmask_kernel(num_points_per_voxel_, self.cfg.p2v_maxpoints)
+
+        bevsidx, bevcoors, num_voxels_per_bev = self.voxelgenerateutils.voxel2bev(voxels_.shape[0], coors_)
         bevmask = VoxelGenerateUtils.paddingmask_kernel(num_voxels_per_bev, self.cfg.v2b_maxvoxels)
+        VoxelGenerateUtils.div_bevs(bevsidx, bevcoors, num_voxels_per_bev, bevmask, self.cfg.v2b_poor, self.cfg.v2b_normal)
         target = 0
-        return voxels, voxelmask, bevsidx, bevcoors, bevmask, target
+        return voxels_, voxelmask_, bevsidx, bevcoors, bevmask, target
 
     def read_velo(self, filepath):
         points = KittiScene(filepath)
