@@ -644,7 +644,7 @@ class VoxelGenerateUtils(object):
         poornum_points_per_voxel = np.ascontiguousarray(num_points_per_voxel[pn])
         normnum_points_per_voxel = np.ascontiguousarray(num_points_per_voxel[pn != True])
         num_points_per_voxel_ = np.concatenate((poornum_points_per_voxel, normnum_points_per_voxel), axis=0)
-        return voxels_, coors_, num_points_per_voxel_
+        return poorvoxels[:, :2, :], normvoxels, coors_, num_points_per_voxel_
 
     @staticmethod
     @numba.jit(nopython=True)
@@ -691,13 +691,12 @@ class VoxelGenerateUtils(object):
         return bevsidx, bevcoors, num_voxels_per_bev
 
     @staticmethod
-    @numba.jit(nopython=True)
+    #@numba.jit(nopython=True)
     def div_bevs(bevsidx, bevcoors, num_voxels_per_bev, bevmask, poor_num, norm_num):
         a = poor_num < bevmask.sum(axis=1)
         b = bevmask.sum(axis=1) <= norm_num
-        c = a & b
         poor = np.where(a != True)
-        norm = np.where(c)
+        norm = np.where(a & b)
         rich = np.where(b != True)
         poorbevsidx = bevsidx[poor]
         normbevsidx = bevsidx[norm]
@@ -705,7 +704,7 @@ class VoxelGenerateUtils(object):
         poorcoors = bevcoors[poor]
         normcoors = bevcoors[norm]
         richcoors = bevcoors[rich]
-        return poorbevsidx, normbevsidx, richbevsidx, poorcoors, normcoors, richcoors
+        return poorbevsidx[:, :2], normbevsidx[:, :16], richbevsidx, poorcoors, normcoors, richcoors
 
 class RandomMosaic(object):
     def __init__(self, cfg, probability=0.5):
