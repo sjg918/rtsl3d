@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import numba
+import math
 from torch import stack as tstack
 
 def torch_to_np_dtype(ttype):
@@ -200,14 +201,59 @@ class MultiLoss(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.batchsize = cfg.batchsize
+        self.outsize = (cfg.bevshape[0]//2, cfg.bevshape[1]//2)
+        self.grid_x = torch.arange(cfg.bevshape[0]//2, dtype=torch.float32).repeat(cfg.batchsize, cfg.bevshape[1]//2, 1)
+        self.grid_y = torch.arange(cfg.bevshape[1]//2, dtype=torch.float32).repeat(cfg.batchsize, cfg.bevshape[0]//2, 1).permute(0, 2, 1).contiguous()
+        self.zsize = cfg.maxZ - cfg.minZ
+        self.meandims = cfg.meandims
+        self.outchannels = cfg.neck_bev_out_channels
+
+        df=df
 
     def forward(self, output, target):
         # output shape : [batch, cfg.neck_bev_out_channels, cfg.bevshape[0], cfg.bevshape[1]]
         # target : list.-> len(batch).{ [numpy array.]-> number of objects(n) with coord(3) dims(3) ry(1) }
+        
+        output = output.permute(0, 2, 3, 1).contiguous()
+        output[..., :4] = output[..., :4].sigmoid()
+
+        pred = output.clone()
+        pred[..., 1] = pred[..., 1] + self.grid_x
+        pred[..., 2] = pred[..., 2] + self.grid_y
+        pred[..., 3] = pred[..., 3] * self.zsize
+        pred[..., 4] = pred[..., 4].exp() * self.meandims[0]
+        pred[..., 5] = pred[..., 5].exp() * self.meandims[1]
+        pred[..., 6] = pred[..., 6].exp() * self.meandims[2]
+
+        bkg_mask = torch.ones((self.batchsize, self.outsize[0], self.outsize[1]), dtype=torch.bool, device=output.device)
+        tgtmask = torch.zeros((self.batchsize, self.outsize[0], self.outsize[1]), dtype=torch.bool, device=output.device)
+        tgtlist = []
         for i in range(self.batchsize):
             output_, target_ = output[i], target[i]
-            
+            discretecoord = target_[:, :2].floor().to(torch.long)
+
+            # cls
+
+
+            # 
+            tgtmask[i, discretecoord[:, 0], discretecoord[:, 1]] = True
+            tgt = torch.zeros((target_.shape[0], self.outchannels), dtype=torch.float32, device=output.device)
+            tgt[:, 0] = 1
+            tgt[:, 1] = target_[:, 0] - target_[:, 0].floor()
+            tgt[:, 2] = target_[:, 1] - target_[:, 1].floor()
+            tgt[:, 3] = target_[:, 2] / self.zsize
+            tgt[:, 4] = (target_[:, 3] / (self.meandims[0] + 1e-16)).log()
+            tgt[:, 5] = (target_[:, 4] / (self.meandims[1] + 1e-16)).log()
+            tgt[:, 6] = (target_[:, 5] / (self.meandims[2] + 1e-16)).log()
+            tgt[:, 7]= (math.pi * 2 - target_[:, 6]).sin()
+            tgt[:, 8]= (math.pi * 2 - target_[:, 6]).cos()
+            tgtlist.append(tgt.unsqueeze(0))
             continue
+
+        tgtlist = torch.cat(tgtlist, dim=0)
+        for i in range(self.batchsize):
+
+
         return 0
 if __name__ == "__main__":
     box_a = np.array([[21.4, 1., 56.6, 1.52563191, 1.6285674, 3.8831164, 0.],
