@@ -39,3 +39,7 @@ cfg.back_bev_in_channels = 32
 cfg.neck_bev_in_channels = cfg.back_bev_in_channels * 2
 cfg.neck_channels = [128, 256, 384, 384]
 cfg.neck_bev_out_channels = 1 + 3 + 3 + 2
+
+#
+cfg.batchsize = 4
+cfg.meandims = [1.6, 3.9, 1.56]
