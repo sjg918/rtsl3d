@@ -34,3 +34,8 @@ cfg.v2b_maxvoxels = 128
 cfg.back_in_channels = 7
 cfg.back_voxelwise_channels = 16
 cfg.back_bev_in_channels = 32
+
+# setting for neck_network
+cfg.neck_bev_in_channels = cfg.back_bev_in_channels * 2
+cfg.neck_channels = [128, 256, 384, 384]
+cfg.neck_bev_out_channels = 1 + 3 + 3 + 2
