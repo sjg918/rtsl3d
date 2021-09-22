@@ -5,6 +5,7 @@ import numpy as np
 import numba
 import math
 from torch import stack as tstack
+import torch.nn.functional as F
 
 def torch_to_np_dtype(ttype):
     type_map = {
@@ -182,10 +183,6 @@ class IoU3DLoss(nn.Module):
         if num_pos_pred > 0:
             diag = torch.arange(num_pos_pred)
             iou_bev, iou_face, iou3d = iou3d_eval(pred, target, self.iou_type, self.offset, self.eps)
-            print(iou3d)
-            print(iou3d.shape)
-            df=df
-
 
             if self.iou_type == 'iou3d':
                 log_iou3d = -iou3d.log()
@@ -207,8 +204,10 @@ class MultiLoss(nn.Module):
         self.zsize = cfg.maxZ - cfg.minZ
         self.meandims = cfg.meandims
         self.outchannels = cfg.neck_bev_out_channels
-
-        df=df
+        self.dir = torch.tensor([[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]], dtype=torch.long)
+        self.maxX = cfg.outputmaxX
+        self.maxY = cfg.outputmaxY
+        self.vaildiou = cfg.vaildiou
 
     def forward(self, output, target):
         # output shape : [batch, cfg.neck_bev_out_channels, cfg.bevshape[0], cfg.bevshape[1]]
@@ -216,27 +215,45 @@ class MultiLoss(nn.Module):
         
         output = output.permute(0, 2, 3, 1).contiguous()
         output[..., :4] = output[..., :4].sigmoid()
+        output[..., 7:] = output[..., 7:].tanh()
 
-        pred = output.clone()
-        pred[..., 1] = pred[..., 1] + self.grid_x
-        pred[..., 2] = pred[..., 2] + self.grid_y
-        pred[..., 3] = pred[..., 3] * self.zsize
-        pred[..., 4] = pred[..., 4].exp() * self.meandims[0]
-        pred[..., 5] = pred[..., 5].exp() * self.meandims[1]
-        pred[..., 6] = pred[..., 6].exp() * self.meandims[2]
+        pred = torch.zeros((self.batchsize, self.outsize[0], self.outsize[1], 7), dtype=torch.float32, device=output.device)
+        pred[..., 0] = output[..., 1] + self.grid_x
+        pred[..., 1] = output[..., 2] + self.grid_y
+        pred[..., 2] = output[..., 3] * self.zsize
+        pred[..., 3] = output[..., 4].exp() * self.meandims[0]
+        pred[..., 4] = output[..., 5].exp() * self.meandims[1]
+        pred[..., 5] = output[..., 6].exp() * self.meandims[2]
+        pred[..., 6] = torch.atan2(output[..., 7], output[..., 8])
 
         bkg_mask = torch.ones((self.batchsize, self.outsize[0], self.outsize[1]), dtype=torch.bool, device=output.device)
-        tgtmask = torch.zeros((self.batchsize, self.outsize[0], self.outsize[1]), dtype=torch.bool, device=output.device)
-        tgtlist = []
+        
+        loss = 0
         for i in range(self.batchsize):
             output_, target_ = output[i], target[i]
             discretecoord = target_[:, :2].floor().to(torch.long)
 
-            # cls
+            # background
+            bkg_mask[i, discretecoord[:, 1], discretecoord[:, 0]] = False
 
+            dircoord = discretecoord.unsqueeze(1).repeat(1, 8, 1) + self.dir.unsqueeze(0).repeat(dircoord.shape[0], 1, 1)
+            vaildcoord_mask = ((dircoord[..., 0] > - 1) & (dircoord[..., 0] < self.maxX)) &\
+                ((dircoord[..., 1] > - 1) & (dircoord[..., 1] < self.maxY))
+
+            for k in range(dircoord.shape[0]):
+                x = (dircoord[k, vaildcoord_mask[k]])[:, 0]
+                y = (dircoord[k, vaildcoord_mask[k]])[:, 1]
+                pred_ = pred[i, y, x, :].view([-1, 7])
+                _, _, iou3d = iou3d_eval(pred_, target_[k])
+                vaildiou_mask = iou3d.view(1) > self.vaildiou
+                x, y = x[vaildiou], y[vaildiou]
+                bkg_mask[i, y, x] = False
+                continue
+
+            bkg = output[i, :, :, 0][bkg_mask[i]]
+            bkgloss = F.binary_cross_entropy(bkg, torch.zeros_like(bkg))
 
             # 
-            tgtmask[i, discretecoord[:, 0], discretecoord[:, 1]] = True
             tgt = torch.zeros((target_.shape[0], self.outchannels), dtype=torch.float32, device=output.device)
             tgt[:, 0] = 1
             tgt[:, 1] = target_[:, 0] - target_[:, 0].floor()
@@ -247,15 +264,33 @@ class MultiLoss(nn.Module):
             tgt[:, 6] = (target_[:, 5] / (self.meandims[2] + 1e-16)).log()
             tgt[:, 7]= (math.pi * 2 - target_[:, 6]).sin()
             tgt[:, 8]= (math.pi * 2 - target_[:, 6]).cos()
-            tgtlist.append(tgt.unsqueeze(0))
+
+            out = output[i, discretecoord[:, 1], discretecoord[:, 0], :].view(-1, self.outchannels)
+            
+            clsloss = F.binary_cross_entropy(out[:, 0], tgt[:, 0])
+            xyzloss = F.binary_cross_entropy(out[:, 1:4], tgt[:, 1:4])
+            wlhloss = F.mse_loss(out[:, 1:4], tgt[:, 1:4]) * 0.5
+            loss_im = F.mse_loss(out[:, 7], tgt[:, 7])
+            loss_re = F.mse_loss(out[:, 8], tgt[:, 8])
+            loss_im_re = (1. - torch.sqrt(out[:, 7] ** 2 + out[:, 8] ** 2)) ** 2
+            loss_im_re_red = loss_im_re.mean()
+            loss_eular = loss_im + loss_re + loss_im_re_red
+
+            loss = loss + bkgloss + clsloss + xyzloss + wlhloss + loss_eular
             continue
 
-        tgtlist = torch.cat(tgtlist, dim=0)
-        for i in range(self.batchsize):
+        return loss
 
-
-        return 0
 if __name__ == "__main__":
+
+    x = torch.randn(5,8,2)
+    mask = (x[..., 0] > - 1) & (x[..., 0] < 1)
+    print(mask.shape)
+
+    x = (x[0, mask[0]])[:, 0]
+    print(x)
+
+    df=df
     box_a = np.array([[21.4, 1., 56.6, 1.52563191, 1.6285674, 3.8831164, 0.],
                       [20.0, 2.50, 56.5, 1.62, 1.37, 4.0, 0.]], dtype=np.float32).reshape(-1, 7)
     box_b = np.array([[20.86000061, 2.50999999, 56.68999863, 1.67999995, 1.38999999, 4.26000023, 3.04999995],
