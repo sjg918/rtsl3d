@@ -26,13 +26,10 @@ class DecoderWithNMS(nn.Module):
         self.meandims = cfg.meandims
         self.killiou = cfg.killiou
 
-    def forward(self, output, target):
+    def forward(self, output):
         # output shape : [batch, cfg.neck_bev_out_channels, cfg.bevshape[0], cfg.bevshape[1]]
-        # target : list.-> len(batch).{ [numpy array.]-> number of objects(n) with coord(3) dims(3) ry(1) }
         
         output = output.permute(0, 2, 3, 1).contiguous()
-        vaildmask = output[..., 0].sigmoid() > self.vaildconf
-
         output[..., :4] = output[..., :4].sigmoid()
         output[..., 7:] = output[..., 7:].tanh()
 
@@ -53,18 +50,23 @@ class DecoderWithNMS(nn.Module):
 
         cnt = 0
         while True:
-            if cnt == sortpred.shape[0]:
+            if cnt >= sortpred.shape[0]:
                 break
             
             if cnt > 0:
-                box0 = sortpred[:cnt]
-            box1 = sortpred[cnt]
-            box2 = sortpred[cnt+1:]
+                box0 = sortpred[:cnt].view(-1, 8)
+            box1 = sortpred[cnt].view(-1, 8)
+            box2 = sortpred[cnt+1:].view(-1, 8)
 
-            _, _, iou3d = iou3d_eval(box2, box1)
+            _, _, iou3d = iou3d_eval(box2[:, 1:], box1[:, 1:])
             vaildmask = iou3d.view(-1) > self.killiou
+            box2 = box2[vaildmask]
 
+            if cnt > 0:
+                sortpred = torch.cat([box0, box1, box2], dim=0)
+            else:
+                sortpred = torch.cat([box1, box2], dim=0)
             cnt = cnt + 1
             continue
 
-        return loss
+        return sortpred
