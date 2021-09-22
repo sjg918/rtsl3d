@@ -43,3 +43,7 @@ cfg.neck_bev_out_channels = 1 + 3 + 3 + 2
 #
 cfg.batchsize = 4
 cfg.meandims = [1.6, 3.9, 1.56]
+cfg.vaildiou = 0.5
+
+#
+cfg.vaildconf = 0.5
