@@ -12,6 +12,7 @@ _BASE_DIR = 'C:\Datasets/sample/'
 
 class KittiDataset(data.Dataset):
     def __init__(self, cfg, mode='train'):
+        self.cuda_id = str(cfg.cuda_ids[0])
         self.cfg = cfg
         self.mode = mode
         with open(_BASE_DIR + 'train.txt') as f:
@@ -114,25 +115,46 @@ class KittiDataset(data.Dataset):
             continue
         return random.choice(idx)
     
-    @staticmethod
-    def collate_fn(batch):
+    def collate_fn_cpu(self, batch):
         inputs = []
         targets = []
         for voxelList, bevList, target in batch:
             inputdict = {}
             poorvoxels,normvoxels = voxelList
-            inputdict['poorvoxels'] = torch.from_numpy(poorvoxels).to(torch.float32)
-            inputdict['normvoxels'] = torch.from_numpy(normvoxels).to(torch.float32)
+            inputdict['poorvoxels'] = torch.from_numpy(poorvoxels).to(dtype=torch.float32, device='cpu')
+            inputdict['normvoxels'] = torch.from_numpy(normvoxels).to(dtype=torch.float32, device='cpu')
             poorbevsidx,normbevsidx,richbevsidx,poorcoors,normcoors,richcoors = bevList
-            inputdict['poorbevsidx'] = torch.from_numpy(poorbevsidx).to(torch.long)
-            inputdict['normbevsidx'] = torch.from_numpy(normbevsidx).to(torch.long)
-            inputdict['richbevsidx'] = torch.from_numpy(richbevsidx).to(torch.long)
-            inputdict['poorcoors'] = torch.from_numpy(poorcoors).to(torch.long)
-            inputdict['normcoors'] = torch.from_numpy(normcoors).to(torch.long)
-            inputdict['richcoors'] = torch.from_numpy(richcoors).to(torch.long)
+            inputdict['poorbevsidx'] = torch.from_numpy(poorbevsidx).to(dtype=torch.long, device='cpu')
+            inputdict['normbevsidx'] = torch.from_numpy(normbevsidx).to(dtype=torch.long, device='cpu')
+            inputdict['richbevsidx'] = torch.from_numpy(richbevsidx).to(dtype=torch.long, device='cpu')
+            inputdict['poorcoors'] = torch.from_numpy(poorcoors).to(dtype=torch.long, device='cpu')
+            inputdict['normcoors'] = torch.from_numpy(normcoors).to(dtype=torch.long, device='cpu')
+            inputdict['richcoors'] = torch.from_numpy(richcoors).to(dtype=torch.long, device='cpu')
             inputs.append(inputdict)
 
-            target = torch.from_numpy(target).to(torch.float32, device)
+            target = torch.from_numpy(target).to(torch.float32)
+            targets.append(target)
+            continue
+        return inputs, targets
+
+    def collate_fn_gpu(self, batch):
+        inputs = []
+        targets = []
+        for voxelList, bevList, target in batch:
+            inputdict = {}
+            poorvoxels,normvoxels = voxelList
+            inputdict['poorvoxels'] = torch.from_numpy(poorvoxels).to(dtype=torch.float32, device='cuda:'+self.cuda_id)
+            inputdict['normvoxels'] = torch.from_numpy(normvoxels).to(dtype=torch.float32, device='cuda:'+self.cuda_id)
+            poorbevsidx,normbevsidx,richbevsidx,poorcoors,normcoors,richcoors = bevList
+            inputdict['poorbevsidx'] = torch.from_numpy(poorbevsidx).to(dtype=torch.long, device='cuda:'+self.cuda_id)
+            inputdict['normbevsidx'] = torch.from_numpy(normbevsidx).to(dtype=torch.long, device='cuda:'+self.cuda_id)
+            inputdict['richbevsidx'] = torch.from_numpy(richbevsidx).to(dtype=torch.long, device='cuda:'+self.cuda_id)
+            inputdict['poorcoors'] = torch.from_numpy(poorcoors).to(dtype=torch.long, device='cuda:'+self.cuda_id)
+            inputdict['normcoors'] = torch.from_numpy(normcoors).to(dtype=torch.long, device='cuda:'+self.cuda_id)
+            inputdict['richcoors'] = torch.from_numpy(richcoors).to(dtype=torch.long, device='cuda:'+self.cuda_id)
+            inputs.append(inputdict)
+
+            target = torch.from_numpy(target).to(torch.float32)
             targets.append(target)
             continue
         return inputs, targets
