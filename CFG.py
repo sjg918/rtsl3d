@@ -3,6 +3,9 @@ from easydict import EasyDict
 
 cfg = EasyDict()
 
+# setting for device
+cfg.cuda_ids = [0]
+
 # setting for ROI
 cfg.minX = 0
 cfg.maxX = 72
@@ -40,10 +43,18 @@ cfg.neck_bev_in_channels = cfg.back_bev_in_channels * 2
 cfg.neck_channels = [128, 256, 384, 384]
 cfg.neck_bev_out_channels = 1 + 3 + 3 + 2
 
-#
-cfg.batchsize = 4
+# setting for loss_function
+cfg.outputmaxX = cfg.bevshape[1] // 2
+cfg.outputmaxY = cfg.bevshape[0] // 2
 cfg.meandims = [1.6, 3.9, 1.56]
 cfg.vaildiou = 0.5
+
+# setting for training
+cfg.num_cpu = 4
+cfg.batchsize = 2
+cfg.learing_rate = 0.001
+cfg.maxepoch = 300
+cfg.saveplace = 'rtls3d'
 
 #
 cfg.vaildconf = 0.5
