@@ -6,19 +6,38 @@ import torch
 import numpy as np
 
 from models.back import VoxelFeatureExtractor
+from models.neck import FeatureAggregator
+from models.loss import MultiLoss
+
+from numba import cuda
 
 kew = KittiDataset(cfg)
-back = VoxelFeatureExtractor(cfg).cuda()
+back = VoxelFeatureExtractor(cfg).cuda(cfg.cuda_ids[0])
+neck = FeatureAggregator(cfg).cuda(cfg.cuda_ids[0])
+lossfunc = MultiLoss(cfg, cfg.cuda_ids[0])
 
 for i in range(len(kew)):
-    voxels, voxelmask, bevsidx, bevcoors, bevmask, target = kew[i]
-    df=-df
-    #voxels = torch.from_numpy(voxels).to(torch.float32).cuda(0)
-    voxelmask = torch.from_numpy(voxelmask).unsqueeze(dim=-1).to(torch.float32)
-    #bevsidx = torch.from_numpy(bevsidx).to(torch.long).cuda(0)
-    #bevcoors = torch.from_numpy(bevcoors).to(torch.long).cuda(0)
-    bevmask = torch.from_numpy(bevmask).unsqueeze(dim=1).to(torch.float32)
+    voxelList, bevList, target = kew[i]
+    
+    inputdict = {}
+    poorvoxels,normvoxels = voxelList
+    inputdict['poorvoxels'] = torch.from_numpy(poorvoxels).to(torch.float32).cuda(cfg.cuda_ids[0])
+    inputdict['normvoxels'] = torch.from_numpy(normvoxels).to(torch.float32).cuda(cfg.cuda_ids[0])
+    poorbevsidx,normbevsidx,richbevsidx,poorcoors,normcoors,richcoors = bevList
+    inputdict['poorbevsidx'] = torch.from_numpy(poorbevsidx).to(torch.long).cuda(cfg.cuda_ids[0])
+    inputdict['normbevsidx'] = torch.from_numpy(normbevsidx).to(torch.long).cuda(cfg.cuda_ids[0])
+    inputdict['richbevsidx'] = torch.from_numpy(richbevsidx).to(torch.long).cuda(cfg.cuda_ids[0])
+    inputdict['poorcoors'] = torch.from_numpy(poorcoors).to(torch.long).cuda(cfg.cuda_ids[0])
+    inputdict['normcoors'] = torch.from_numpy(normcoors).to(torch.long).cuda(cfg.cuda_ids[0])
+    inputdict['richcoors'] = torch.from_numpy(richcoors).to(torch.long).cuda(cfg.cuda_ids[0])
+    target = torch.from_numpy(target).to(torch.float32).cuda()
+    
+    rqt = back(inputdict['poorvoxels'], inputdict['normvoxels'],\
+        inputdict['poorbevsidx'], inputdict['normbevsidx'], inputdict['richbevsidx'],\
+        inputdict['poorcoors'], inputdict['normcoors'], inputdict['richcoors']).unsqueeze(0)
+    rqt = neck(rqt)
+    loss = lossfunc(rqt, [target])
+    df=df
 
-
-    #rqt = back(voxels, voxelmask, bevsidx, bevcoors, bevmask)
+    print(rqt.shape)
     #back.zero_grad()
