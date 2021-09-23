@@ -113,18 +113,24 @@ class KittiDataset(data.Dataset):
         return random.choice(idx)
     
     @staticmethod
-    def collate_fn(batch, cuda_idx=0):
-        input = []
+    def collate_fn(batch):
+        inputs = []
         targets = []
-        for voxels, voxelmask, bevsidx, bevcoors, bevmask, target in batch:
+        for voxelList, bevList, target in batch:
             inputdict = {}
-            inputdict['voxels'] = torch.from_numpy(voxels).to(torch.float32).cuda(cuda_idx)
-            inputdict['voxelmask'] = torch.from_numpy(voxelmask).unsqueeze(dim=-1).to(torch.float32).cuda(cuda_idx)
-            inputdict['bevsidx'] = torch.from_numpy(bevsidx).to(torch.long).cuda(cuda_idx)
-            inputdict['bevcoors'] = torch.from_numpy(bevcoors).to(torch.long).cuda(cuda_idx)
-            inputdict['bevmask'] = torch.from_numpy(bevmask).unsqueeze(dim=1).to(torch.float32).cuda(cuda_idx)
-            target = torch.from_numpy(target).unsqueeze(0).to(torch.float32)
-            input.append(inputdict)
+            poorvoxels,normvoxels = voxelList
+            inputdict['poorvoxels'] = torch.from_numpy(poorvoxels).to(torch.float32)
+            inputdict['normvoxels'] = torch.from_numpy(normvoxels).to(torch.float32)
+            poorbevsidx,normbevsidx,richbevsidx,poorcoors,normcoors,richcoors = bevList
+            inputdict['poorbevsidx'] = torch.from_numpy(poorbevsidx).to(torch.long)
+            inputdict['normbevsidx'] = torch.from_numpy(normbevsidx).to(torch.long)
+            inputdict['richbevsidx'] = torch.from_numpy(richbevsidx).to(torch.long)
+            inputdict['poorcoors'] = torch.from_numpy(poorcoors).to(torch.long)
+            inputdict['normcoors'] = torch.from_numpy(normcoors).to(torch.long)
+            inputdict['richcoors'] = torch.from_numpy(richcoors).to(torch.long)
+            inputs.append(inputdict)
+
+            target = torch.from_numpy(target).to(torch.float32, device)
+            targets.append(target)
             continue
-        targets = torch.cat(targets, dim=0)
-        return input
+        return inputs, targets
