@@ -7,16 +7,19 @@ import torch.nn.functional as F
 from .iou3d_utils import iou3d_eval
 
 class MultiLoss(nn.Module):
-    def __init__(self, cfg):
+    def __init__(self, cfg, cuda_id):
         super().__init__()
         self.batchsize = cfg.batchsize
         self.outsize = (cfg.bevshape[0]//2, cfg.bevshape[1]//2)
-        self.grid_x = torch.arange(cfg.bevshape[0]//2, dtype=torch.float32).repeat(cfg.batchsize, cfg.bevshape[1]//2, 1)
-        self.grid_y = torch.arange(cfg.bevshape[1]//2, dtype=torch.float32).repeat(cfg.batchsize, cfg.bevshape[0]//2, 1).permute(0, 2, 1).contiguous()
+        self.grid_y = torch.arange(cfg.bevshape[0]//2, dtype=torch.float32, device='cuda:'+str(cuda_id))\
+            .repeat(cfg.batchsize, cfg.bevshape[1]//2, 1).detach()#.cpu()
+        self.grid_x = torch.arange(cfg.bevshape[1]//2, dtype=torch.float32, device='cuda:'+str(cuda_id))\
+            .repeat(cfg.batchsize, cfg.bevshape[0]//2, 1).permute(0, 2, 1).contiguous().detach()#.cpu()
         self.zsize = cfg.maxZ - cfg.minZ
         self.meandims = cfg.meandims
         self.outchannels = cfg.neck_bev_out_channels
-        self.dir = torch.tensor([[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]], dtype=torch.long)
+        self.dir = torch.tensor([[-1, -1], [0, -1], [1, -1], [-1, 0],\
+            [1, 0], [-1, 1], [0, 1], [1, 1]], dtype=torch.long, device='cuda:'+str(cuda_id)).detach()#.cpu()
         self.maxX = cfg.outputmaxX
         self.maxY = cfg.outputmaxY
         self.vaildiou = cfg.vaildiou
@@ -29,7 +32,7 @@ class MultiLoss(nn.Module):
         output[..., :4] = output[..., :4].sigmoid()
         output[..., 7:] = output[..., 7:].tanh()
 
-        pred = torch.zeros((self.batchsize, self.outsize[0], self.outsize[1], 7), dtype=torch.float32, device=output.device)
+        pred = torch.zeros((self.batchsize, self.outsize[1], self.outsize[0], 7), dtype=torch.float32, device=output.device)
         pred[..., 0] = output[..., 1] + self.grid_x
         pred[..., 1] = output[..., 2] + self.grid_y
         pred[..., 2] = output[..., 3] * self.zsize
@@ -38,7 +41,7 @@ class MultiLoss(nn.Module):
         pred[..., 5] = output[..., 6].exp() * self.meandims[2]
         pred[..., 6] = torch.atan2(output[..., 7], output[..., 8])
 
-        bkg_mask = torch.ones((self.batchsize, self.outsize[0], self.outsize[1]), dtype=torch.bool, device=output.device)
+        bkg_mask = torch.ones((self.batchsize, self.outsize[1], self.outsize[0]), dtype=torch.bool, device=output.device)
         
         loss = 0
         for i in range(self.batchsize):
@@ -46,20 +49,25 @@ class MultiLoss(nn.Module):
             discretecoord = target_[:, :2].floor().to(torch.long)
 
             # background
-            bkg_mask[i, discretecoord[:, 1], discretecoord[:, 0]] = False
+            bkg_mask[i, discretecoord[:, 0], discretecoord[:, 1]] = False
 
-            dircoord = discretecoord.unsqueeze(1).repeat(1, 8, 1) + self.dir.unsqueeze(0).repeat(dircoord.shape[0], 1, 1)
+            dircoord = discretecoord.unsqueeze(1).repeat(1, 8, 1) +\
+                self.dir.unsqueeze(0).repeat(discretecoord.shape[0], 1, 1)
+            print(dircoord)
             vaildcoord_mask = ((dircoord[..., 0] > - 1) & (dircoord[..., 0] < self.maxX)) &\
                 ((dircoord[..., 1] > - 1) & (dircoord[..., 1] < self.maxY))
+            vaildcoord_mask = vaildcoord_mask.view(dircoord.shape[0], 8)
 
             for k in range(dircoord.shape[0]):
                 x = (dircoord[k, vaildcoord_mask[k]])[:, 0]
                 y = (dircoord[k, vaildcoord_mask[k]])[:, 1]
-                pred_ = pred[i, y, x, :].view([-1, 7])
-                _, _, iou3d = iou3d_eval(pred_, target_[k])
+                pred_ = pred[i, x, y, :].view(-1, 7)
+                _, _, iou3d = iou3d_eval(pred_, target_[k].view(-1, 7))
                 vaildiou_mask = iou3d.view(-1) > self.vaildiou
-                x, y = x[vaildiou], y[vaildiou]
-                bkg_mask[i, y, x] = False
+                if vaildiou_mask.sum() == 0:
+                    continue
+                x, y = x[vaildiou_mask], y[vaildiou_mask]
+                bkg_mask[i, x, y] = False
                 continue
 
             bkg = output[i, :, :, 0][bkg_mask[i]]
@@ -77,7 +85,7 @@ class MultiLoss(nn.Module):
             tgt[:, 7]= (math.pi * 2 - target_[:, 6]).sin()
             tgt[:, 8]= (math.pi * 2 - target_[:, 6]).cos()
 
-            out = output[i, discretecoord[:, 1], discretecoord[:, 0], :].view(-1, self.outchannels)
+            out = output[i, discretecoord[:, 0], discretecoord[:, 1], :].view(-1, self.outchannels)
             
             clsloss = F.binary_cross_entropy(out[:, 0], tgt[:, 0])
             xyzloss = F.binary_cross_entropy(out[:, 1:4], tgt[:, 1:4])
