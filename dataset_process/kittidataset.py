@@ -73,9 +73,11 @@ class KittiDataset(data.Dataset):
         bevmask = VoxelGenerateUtils.paddingmask_kernel(num_voxels_per_bev, self.cfg.v2b_maxvoxels)
         poorbevsidx, normbevsidx, richbevsidx, poorcoors, normcoors, richcoors =\
            VoxelGenerateUtils.div_bevs(bevsidx, bevcoors, num_voxels_per_bev, bevmask, self.cfg.v2b_poor, self.cfg.v2b_normal)
-        target = 0
+        
         voxelList= [poorvoxels,normvoxels]
         bevList = [poorbevsidx,normbevsidx,richbevsidx,poorcoors,normcoors,richcoors]
+        target = [i.getnumpy_kittiformat_4train(self.cfg.minY, self.cfg.minZ) for i in labels_]
+        target = np.concatenate(target).reshape(-1, 7)
         return voxelList, bevList, target
 
     def read_velo(self, filepath):
