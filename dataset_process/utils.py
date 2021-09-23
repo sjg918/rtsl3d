@@ -175,7 +175,8 @@ class KittiObject(object):
         self.velocorners3d[:, 1] = self.velocorners3d[:, 1] + self.veloy
         self.ry = self.ry - angle
 
-    def get_numpy_kittiformat(self):
+    def getnumpy_kittiformat_4train(self, minY, minZ):
+        self.shift3d(0, -minY, -minZ)
         return np.array([self.velox, self.veloy, self.veloz, self.w, self.l, self.h, self.ry], dtype=np.float32)
 
     def compute_box_3d(self, P):
