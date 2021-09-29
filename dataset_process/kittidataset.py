@@ -121,15 +121,15 @@ class KittiDataset(data.Dataset):
         for voxelList, bevList, target in batch:
             inputdict = {}
             poorvoxels,normvoxels = voxelList
-            inputdict['poorvoxels'] = torch.from_numpy(poorvoxels).to(dtype=torch.float32, device='cpu')
-            inputdict['normvoxels'] = torch.from_numpy(normvoxels).to(dtype=torch.float32, device='cpu')
+            inputdict['poorvoxels'] = torch.from_numpy(poorvoxels).to(dtype=torch.float32)
+            inputdict['normvoxels'] = torch.from_numpy(normvoxels).to(dtype=torch.float32)
             poorbevsidx,normbevsidx,richbevsidx,poorcoors,normcoors,richcoors = bevList
-            inputdict['poorbevsidx'] = torch.from_numpy(poorbevsidx).to(dtype=torch.long, device='cpu')
-            inputdict['normbevsidx'] = torch.from_numpy(normbevsidx).to(dtype=torch.long, device='cpu')
-            inputdict['richbevsidx'] = torch.from_numpy(richbevsidx).to(dtype=torch.long, device='cpu')
-            inputdict['poorcoors'] = torch.from_numpy(poorcoors).to(dtype=torch.long, device='cpu')
-            inputdict['normcoors'] = torch.from_numpy(normcoors).to(dtype=torch.long, device='cpu')
-            inputdict['richcoors'] = torch.from_numpy(richcoors).to(dtype=torch.long, device='cpu')
+            inputdict['poorbevsidx'] = torch.from_numpy(poorbevsidx).to(dtype=torch.long)
+            inputdict['normbevsidx'] = torch.from_numpy(normbevsidx).to(dtype=torch.long)
+            inputdict['richbevsidx'] = torch.from_numpy(richbevsidx).to(dtype=torch.long)
+            inputdict['poorcoors'] = torch.from_numpy(poorcoors).to(dtype=torch.long)
+            inputdict['normcoors'] = torch.from_numpy(normcoors).to(dtype=torch.long)
+            inputdict['richcoors'] = torch.from_numpy(richcoors).to(dtype=torch.long)
             inputs.append(inputdict)
 
             target = torch.from_numpy(target).to(torch.float32)
@@ -154,7 +154,7 @@ class KittiDataset(data.Dataset):
             inputdict['richcoors'] = torch.from_numpy(richcoors).to(dtype=torch.long, device='cuda:'+self.cuda_id)
             inputs.append(inputdict)
 
-            target = torch.from_numpy(target).to(torch.float32)
+            target = torch.from_numpy(target).to(dtype=torch.float32, device='cuda:'+self.cuda_id)
             targets.append(target)
             continue
         return inputs, targets
