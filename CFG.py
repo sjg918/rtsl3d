@@ -50,11 +50,19 @@ cfg.meandims = [1.6, 3.9, 1.56]
 cfg.vaildiou = 0.5
 
 # setting for training
-cfg.num_cpu = 4
-cfg.batchsize = 2
+cfg.num_cpu = 8
+cfg.batchsize = 4
 cfg.learing_rate = 0.001
-cfg.maxepoch = 300
-cfg.saveplace = 'rtls3d'
+cfg.maxepoch = 80
+cfg.saveplace = 'rtsl3d'
+cfg.rampup_epoch = 15
+def sigmoid_shaped_schedule(i):
+    if i < cfg.rampup_epoch:
+        factor = math.exp(-5 * (1 - i/cfg.rampup_epoch) * (1 - i/cfg.rampup_epoch))
+    else:
+        factor = 1
+    return factor
+cfg.rampup_schedule = sigmoid_shaped_schedule
 
 #
 cfg.vaildconf = 0.5
