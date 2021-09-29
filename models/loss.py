@@ -53,7 +53,7 @@ class MultiLoss(nn.Module):
 
             dircoord = discretecoord.unsqueeze(1).repeat(1, 8, 1) +\
                 self.dir.unsqueeze(0).repeat(discretecoord.shape[0], 1, 1)
-            print(dircoord)
+            
             vaildcoord_mask = ((dircoord[..., 0] > - 1) & (dircoord[..., 0] < self.maxX)) &\
                 ((dircoord[..., 1] > - 1) & (dircoord[..., 1] < self.maxY))
             vaildcoord_mask = vaildcoord_mask.view(dircoord.shape[0], 8)
@@ -70,7 +70,7 @@ class MultiLoss(nn.Module):
                 bkg_mask[i, x, y] = False
                 continue
 
-            bkg = output[i, :, :, 0][bkg_mask[i]]
+            bkg = output[i, :, :, 0][bkg_mask[i].clone()]
             bkgloss = F.binary_cross_entropy(bkg, torch.zeros_like(bkg))
 
             # 
