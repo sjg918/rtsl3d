@@ -8,15 +8,20 @@ import numpy as np
 import torch
 import cv2
 
-_BASE_DIR = 'C:\Datasets/sample/'
+_BASE_DIR = '/home/user/DataSet/kitti_3dobject/KITTI/object/training/'
 
 class KittiDataset(data.Dataset):
     def __init__(self, cfg, mode='train'):
         self.cuda_id = str(cfg.cuda_ids[0])
         self.cfg = cfg
         self.mode = mode
-        with open(_BASE_DIR + 'train.txt') as f:
-            self.lists = f.readlines()
+        if mode == 'train':
+            with open(_BASE_DIR + 'train.txt') as f:
+                self.lists = f.readlines()
+        elif mode == 'val':
+            with open(_BASE_DIR + 'val.txt') as f:
+                self.lists = f.readlines()
+        self.mosaicprobability = cfg.mosaicprobability
         self.voxelgenerateutils = VoxelGenerateUtils(cfg)
         self.randommosaic = RandomMosaic(cfg)
         self.randommixup = RandomMixup(cfg)
@@ -31,8 +36,14 @@ class KittiDataset(data.Dataset):
         if self.mode == 'val':
             points = self.read_velo(_BASE_DIR + 'velodyne(lidar)/' + self.lists[idx][:6] + '.bin')
             calib  = self.read_calib(_BASE_DIR + 'calib/' + self.lists[idx][:6] + '.txt')
-            #labels = self.read_label(_BASE_DIR + 'label/' + self.lists[idx][:6] + '.txt', points, calib)
+            labels = self.read_label(_BASE_DIR + 'label_2/' + self.lists[idx][:6] + '.txt', points, calib)
             points_ = KittiObjectUtils.compute_boundary_inner_points(self.boundary, points.points)
+            map_ = mkBVEmap(points_, labels, self.cfg)
+
+            cv2.imshow('gg', map_)
+            cv2.waitKey(0)
+            df=df
+
             voxels, coors, num_points_per_voxel = self.voxelgenerateutils.point2voxel(points_)
             voxelmask = VoxelGenerateUtils.paddingmask_kernel(num_points_per_voxel, self.cfg.p2v_maxpoints)
             coors_re = coors.repeat(voxels.shape[1], axis=0).reshape(voxels.shape[0], voxels.shape[1], 3)
@@ -48,14 +59,20 @@ class KittiDataset(data.Dataset):
 
             voxelList= [poorvoxels,normvoxels]
             bevList = [poorbevsidx,normbevsidx,richbevsidx,poorcoors,normcoors,richcoors]
-            return voxelList, bevList, calib
-        
+            if labels != None:
+                target = [i.getnumpy_kittiformat_4train(self.cfg.minY, self.cfg.minZ) for i in labels]
+                target = np.concatenate(target).reshape(-1, 7)
+                return voxelList, bevList, calib, self.lists[idx][:6], target
+            else:
+                return voxelList, bevList, calib, self.lists[idx][:6], None
+
+        #if np.random.uniform(0, 1) < self.mosaicprobability:
         Plist, Llist = [], []
         for i in range(4):
             id = random.randint(0, self.__len__() - 1)
             points = self.read_velo(_BASE_DIR + 'velodyne(lidar)/' + self.lists[id][:6] + '.bin')
             calib  = self.read_calib(_BASE_DIR + 'calib/' + self.lists[id][:6] + '.txt')
-            labels = self.read_label(_BASE_DIR + 'label/' + self.lists[id][:6] + '.txt', points, calib)
+            labels = self.read_label(_BASE_DIR + 'label_2/' + self.lists[id][:6] + '.txt', points, calib)
             Plist.append(points)
             Llist.append(labels)
 
@@ -66,19 +83,16 @@ class KittiDataset(data.Dataset):
                 id = random.randint(0, self.__len__() - 1)
                 points_ = self.read_velo(_BASE_DIR + 'velodyne(lidar)/' + self.lists[id][:6] + '.bin')
                 calib_  = self.read_calib(_BASE_DIR + 'calib/' + self.lists[id][:6] + '.txt')
-                labels_ = self.read_label(_BASE_DIR + 'label/' + self.lists[id][:6] + '.txt', points_, calib_)
+                labels_ = self.read_label(_BASE_DIR + 'label_2/' + self.lists[id][:6] + '.txt', points_, calib_)
                 labels_ = KittiObjectUtils.verify_object_inner_boundary(self.boundary, labels_)
                 if labels_ is not None:
                     break
                 continue
             points, labels = self.randommixup(points, labels, labels_, ra, rx, ry)
-        points_, labels_ = self.randompyramid(points, labels)
-
-        #pts_ = KittiObjectUtils.compute_boundary_inner_points(self.boundary, points_.points)
-        #map_ = mkBVEmap(pts_, labels_, self.cfg)
-
-        #cv2.imshow('gg', map_)
-        #cv2.waitKey(0)
+        
+        # !!!!!!!!
+        #points_, labels_ = self.randompyramid(points, labels)
+        points_, labels_ = points, labels
 
         points_ = KittiObjectUtils.compute_boundary_inner_points(self.boundary, points_.points)
         voxels, coors, num_points_per_voxel = self.voxelgenerateutils.point2voxel(points_)
