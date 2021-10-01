@@ -177,7 +177,7 @@ class KittiObject(object):
 
     def getnumpy_kittiformat_4train(self, minY, minZ):
         self.shift3d(0, -minY, -minZ)
-        return np.array([self.velox, self.veloy, self.veloz, self.w, self.l, self.h, self.ry], dtype=np.float32)
+        return np.array([self.velox, self.veloy, self.veloz, self.h, self.w, self.l, self.ry], dtype=np.float32) # h w l
 
     def compute_box_3d(self, P):
         # compute rotational matrix around yaw axis
@@ -1073,32 +1073,33 @@ class RandomPyramid(object):
                 pyramidlist[choice][idx][:, 0] = pyramidlist[choice][idx][:, 0] + x2
                 pyramidlist[choice][idx][:, 1] = pyramidlist[choice][idx][:, 1] + y2
 
-        ## random dropout
-        #for num in range(numobject):
-        #    if labels[num].level == 3:
-        #        continue
+        # random dropout
+        for num in range(numobject):
+           if labels[num].innerpoints.shape[0] < 10:
+               continue
 
-        #    if np.random.uniform(0, 1) < self.dropp:
-        #        idx = np.random.randint(0, 6)
-        #        empty = np.zeros((0, 4), dtype=np.float32)
-        #        pyramidlist[num][idx] = empty
-        #        continue
-        #    continue
+           if np.random.uniform(0, 1) < self.dropp:
+               idx = np.random.randint(0, 6)
+               empty = np.zeros((0, 4), dtype=np.float32)
+               pyramidlist[num][idx] = empty
+           continue
 
-        ## random sparsify
-        #for num in range(numobject):
-        #    if labels[num].level == 3:
-        #        continue
+        # random sparsify
+        for num in range(numobject):
+           if labels[num].innerpoints.shape[0] < 10:
+               continue
 
-        #    if np.random.uniform(0, 1) < self.sparsifyp:
-        #        idx = np.random.randint(0, 6)
-        #        tmp = pyramidlist[num][idx]
-        #        if tmp.shape[0] == 0:
-        #            continue
-        #        mask = np.random.uniform(0, 1, size=tmp.shape[0])
-        #        mask = (mask > 0.5)
-        #        pyramidlist[num][idx] = tmp[mask]
-        #    continue
+           if np.random.uniform(0, 1) < self.sparsifyp:
+               idx = np.random.randint(0, 6)
+               tmp = pyramidlist[num][idx]
+               if tmp.shape[0] == 0:
+                   continue
+               mask = np.random.uniform(0, 1, size=tmp.shape[0])
+               mask = (mask > 0.5)
+               if mask.sum() == 0:
+                   continue
+               pyramidlist[num][idx] = tmp[mask]
+           continue
 
         # merge
         for num, (t,b,L,R,f,r) in enumerate(pyramidlist):
