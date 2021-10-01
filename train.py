@@ -36,15 +36,13 @@ def train():
     # define dataloader
     kitti_dataset = KittiDataset(cfg)
     kitti_loader = DataLoader(kitti_dataset, batch_size=cfg.batchsize, shuffle=True, num_workers=cfg.num_cpu,\
-       pin_memory=True, drop_last=True, collate_fn=kitti_dataset.collate_fn_gpu)
+       pin_memory=False, drop_last=True, collate_fn=kitti_dataset.collate_fn_gpu)
 
-    print(len(kitti_loader))
-    df=-df
     # define optimizer and scheduler
     back_optimizer = optim.Adam(back.parameters(), lr=cfg.learing_rate, betas=(0.9, 0.999), eps=1e-08)
-    back_scheduler = optim.lr_scheduler.LambdaLR(back_optimizer, cfg.yolo_burnin_schedule)
+    back_scheduler = optim.lr_scheduler.LambdaLR(back_optimizer, cfg.rampup_schedule)
     neck_optimizer = optim.Adam(neck.parameters(), lr=cfg.learing_rate, betas=(0.9, 0.999), eps=1e-08)
-    neck_scheduler = optim.lr_scheduler.LambdaLR(neck_optimizer, cfg.yolo_burnin_schedule)
+    neck_scheduler = optim.lr_scheduler.LambdaLR(neck_optimizer, cfg.rampup_schedule)
 
     # define loss function
     lossfunc = MultiLoss(cfg, cfg.cuda_ids[0])
@@ -52,7 +50,7 @@ def train():
     back.train()
     neck.train()
 
-    for epoch in range(cfg.maxepoch):
+    for epoch in range(1, cfg.maxepoch+1):
         # print milestones
         print("\n(", str(epoch), "/", str(cfg.maxepoch), ") -epoch- ", "(", datetime.datetime.now(), ")")
         
@@ -69,29 +67,35 @@ def train():
             # backward
             loss.backward()
             back_optimizer.step()
-            back_scheduler.step()
             neck_optimizer.step()
-            neck_scheduler.step()
             back.zero_grad()
             neck.zero_grad()
-
+            
             # print steploss
-            print(":{}/{} steploss:{:.6f}".format(cnt, len(kitti_loader), loss.item()), end="\r")
+            print("{}/{} steploss:{:.6f}".format(cnt, len(kitti_loader), loss.item()), end="\r")
             continue
+
+        # learning rate scheduling
+        back_scheduler.step()
+        neck_scheduler.step()
 
         # save model
         if epoch % 10 == 0:
-            torch.save(back.module.state_dict(), 'weights/' + cfg.saveplace + '/back_' + str(epoch) + '.pth')
-            torch.save(head.module.state_dict(), 'weights/' + cfg.saveplace + '/head_' + str(epoch) + '.pth')
+            torch.save(back.state_dict(), './weights/' + cfg.saveplace + '/backnetw_' + str(epoch) + '.pth')
+            torch.save(neck.state_dict(), './weights/' + cfg.saveplace + '/necknetw_' + str(epoch) + '.pth')
+            torch.save(back_optimizer.state_dict(), './weights/' + cfg.saveplace + '/backopti_' + str(epoch) + '.pth')
+            torch.save(neck_optimizer.state_dict(), './weights/' + cfg.saveplace + '/neckopti_' + str(epoch) + '.pth')
             print('\n{}epoch model saved !'.format(epoch), "(", datetime.datetime.now(), ")")
 
         continue
     # end.
-    torch.save(back.module.state_dict(), 'weights/' + cfg.saveplace + '/back_end.pth')
-    torch.save(head.module.state_dict(), 'weights/' + cfg.saveplace + '/head_end.pth')
-    print('\n{}epoch model saved !'.format(epoch), "(", datetime.datetime.now(), ")")
+    torch.save(back.state_dict(), './weights/' + cfg.saveplace + '/backnetw_end.pth')
+    torch.save(neck.state_dict(), './weights/' + cfg.saveplace + '/necknetw_end.pth')
+    torch.save(back_optimizer.state_dict(), './weights/' + cfg.saveplace + '/backopti_' + str(epoch) + '.pth')
+    torch.save(neck_optimizer.state_dict(), './weights/' + cfg.saveplace + '/neckopti_' + str(epoch) + '.pth')
     print("\n-end- ", "(", datetime.datetime.now(), ")")
 
 if __name__ == '__main__':
+    torch.multiprocessing.set_start_method('spawn')
     train()
 
