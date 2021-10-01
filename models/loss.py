@@ -23,6 +23,7 @@ class MultiLoss(nn.Module):
         self.maxX = cfg.outputmaxX
         self.maxY = cfg.outputmaxY
         self.vaildiou = cfg.vaildiou
+        self.reduction = cfg.lossreduction
 
     def forward(self, output, target):
         # output shape : [batch, cfg.neck_bev_out_channels, cfg.bevshape[0], cfg.bevshape[1]]
@@ -71,7 +72,7 @@ class MultiLoss(nn.Module):
                 continue
 
             bkg = output[i, :, :, 0][bkg_mask[i].clone()]
-            bkgloss = F.binary_cross_entropy(bkg, torch.zeros_like(bkg))
+            bkgloss = F.binary_cross_entropy(bkg, torch.zeros_like(bkg), reduction=self.reduction)
 
             # 
             tgt = torch.zeros((target_.shape[0], self.outchannels), dtype=torch.float32, device=output.device)
@@ -79,24 +80,21 @@ class MultiLoss(nn.Module):
             tgt[:, 1] = target_[:, 0] - target_[:, 0].floor()
             tgt[:, 2] = target_[:, 1] - target_[:, 1].floor()
             tgt[:, 3] = target_[:, 2] / self.zsize
-            tgt[:, 4] = (target_[:, 3] / (self.meandims[0] + 1e-16)).log()
-            tgt[:, 5] = (target_[:, 4] / (self.meandims[1] + 1e-16)).log()
-            tgt[:, 6] = (target_[:, 5] / (self.meandims[2] + 1e-16)).log()
-            tgt[:, 7]= (math.pi * 2 - target_[:, 6]).sin()
-            tgt[:, 8]= (math.pi * 2 - target_[:, 6]).cos()
+            tgt[:, 4] = (target_[:, 3] / self.meandims[0]).log()
+            tgt[:, 5] = (target_[:, 4] / self.meandims[1]).log()
+            tgt[:, 6] = (target_[:, 5] / self.meandims[2]).log()
+            tgt[:, 7] = target_[:, 6].sin()
+            tgt[:, 8] = target_[:, 6].cos()
 
             out = output[i, discretecoord[:, 0], discretecoord[:, 1], :].view(-1, self.outchannels)
-            
-            clsloss = F.binary_cross_entropy(out[:, 0], tgt[:, 0])
-            xyzloss = F.binary_cross_entropy(out[:, 1:4], tgt[:, 1:4])
-            wlhloss = F.mse_loss(out[:, 1:4], tgt[:, 1:4]) * 0.5
-            loss_im = F.mse_loss(out[:, 7], tgt[:, 7])
-            loss_re = F.mse_loss(out[:, 8], tgt[:, 8])
-            loss_im_re = (1. - torch.sqrt(out[:, 7] ** 2 + out[:, 8] ** 2)) ** 2
-            loss_im_re_red = loss_im_re.mean()
-            loss_eular = loss_im + loss_re + loss_im_re_red
 
-            loss = loss + bkgloss + clsloss + xyzloss + wlhloss + loss_eular
+            clsloss = F.binary_cross_entropy(out[:, 0], tgt[:, 0], reduction=self.reduction)
+            xyzloss = F.binary_cross_entropy(out[:, 1:4], tgt[:, 1:4], reduction=self.reduction)
+            hwlloss = F.mse_loss(out[:, 1:4], tgt[:, 1:4], reduction=self.reduction) * 0.5
+            loss_im = F.mse_loss(out[:, 7], tgt[:, 7], reduction=self.reduction) * 0.5
+            loss_re = F.mse_loss(out[:, 8], tgt[:, 8], reduction=self.reduction) * 0.5
+
+            loss = loss + bkgloss + clsloss + xyzloss + hwlloss + loss_im + loss_re
             continue
 
         return loss
