@@ -1,5 +1,6 @@
 
 from easydict import EasyDict
+import math
 
 cfg = EasyDict()
 
@@ -46,23 +47,32 @@ cfg.neck_bev_out_channels = 1 + 3 + 3 + 2
 # setting for loss_function
 cfg.outputmaxX = cfg.bevshape[1] // 2
 cfg.outputmaxY = cfg.bevshape[0] // 2
-cfg.meandims = [1.6, 3.9, 1.56]
+cfg.meandims = [1.56, 1.6, 3.9] # h w l
 cfg.vaildiou = 0.5
 
 # setting for training
 cfg.num_cpu = 8
 cfg.batchsize = 4
-cfg.learing_rate = 0.001
-cfg.maxepoch = 80
+cfg.learing_rate = 0.002
+cfg.maxepoch = 60
 cfg.saveplace = 'rtsl3d'
 cfg.rampup_epoch = 15
+cfg.milestones1 = 35
+cfg.milestones2 = 55
 def sigmoid_shaped_schedule(i):
     if i < cfg.rampup_epoch:
-        factor = math.exp(-5 * (1 - i/cfg.rampup_epoch) * (1 - i/cfg.rampup_epoch))
-    else:
+        factor = pow((i+1) / cfg.rampup_epoch, 4)
+    elif i < cfg.milestones1:
         factor = 1
+    elif i < cfg.milestones2:
+        factor = 0.5
+    else:
+        factor = 0.01
     return factor
 cfg.rampup_schedule = sigmoid_shaped_schedule
+cfg.lossreduction = 'sum'
+cfg.mosaicprobability = 0.5
 
 #
 cfg.vaildconf = 0.5
+cfg.saveresulttxtplace = 'rtsl3d_result'
