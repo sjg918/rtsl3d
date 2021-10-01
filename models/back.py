@@ -79,6 +79,7 @@ class VoxelFeatureExtractor(nn.Module):
         self.poorbfe = PoorFELayer(cfg.v2b_poor, cfg.back_voxelwise_channels, cfg.back_bev_in_channels // 2)
         self.normbfe = NormalFELayer(cfg.v2b_normal, cfg.back_voxelwise_channels, cfg.back_bev_in_channels)
         self.richbfe = RichFELayer(cfg.v2b_maxvoxels, cfg.back_voxelwise_channels, cfg.back_bev_in_channels * 2)
+        self.dropout = nn.Dropout()
 
     def forward(self, poorvoxels, normvoxels,\
             poorbevsidx, normbevsidx, richbevsidx, poorcoors, normcoors, richcoors):
@@ -101,6 +102,9 @@ class VoxelFeatureExtractor(nn.Module):
         poorb = self.poorbfe(poorb)
         normb = self.normbfe(normb)
         richb = self.richbfe(richb)
+        poorb = self.dropout(poorb)
+        normb = self.dropout(normb)
+        richb = self.dropout(richb)
 
         # step4.
         bevmap = torch.zeros((self.bevshape[0], self.bevshape[1], self.bev_in_channels * 2),
