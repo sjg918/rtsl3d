@@ -1,4 +1,5 @@
 
+from numpy.lib.function_base import select
 import torch.utils.data as data
 import numba
 import random
@@ -6,7 +7,6 @@ from torch.nn import functional as F
 import math
 
 import os
-from PIL import Image
 import numpy as np
 
 # refers
@@ -282,6 +282,7 @@ class KittiObjectUtils(object):
         for o in kittiobjects:
             if ((o.velox > minX) & (o.velox < maxX) &
                 (o.veloy > minY) & (o.veloy < maxY)):
+                #print(minX, maxX, o.velox)
                 vl.append(o)
             continue
 
@@ -557,13 +558,6 @@ class VoxelGenerateUtils(object):
         self.p2v_maxvoxels = cfg.p2v_maxvoxels
         self.p2v_idxmat = 65535 * np.ones((self.voxelshape), dtype=np.uint16)
 
-        self.bevsize = cfg.bevsize
-        self.bevmulti = cfg.bevmulti
-        self.bevshape = cfg.bevshape
-        self.v2b_maxvoxels = cfg.v2b_maxvoxels
-        self.v2b_idxmat = 65535 * np.ones((self.bevshape), dtype=np.uint16)
-        self.voxelwise_channels = cfg.back_voxelwise_channels
-
     @staticmethod
     @numba.jit(nopython=True)
     def point2voxel_kernel(
@@ -614,98 +608,77 @@ class VoxelGenerateUtils(object):
         self.p2v_idxmat = self.p2v_idxmat * 0 + 65535
         return voxels, coors, num_points_per_voxel
 
-    @staticmethod
-    @numba.jit(nopython=True)
-    def paddingmask_kernel(num_voxel, max_num):
-        actual_num = np.expand_dims(num_voxel, axis=1)
-        max_num = np.arange(max_num, dtype=np.int64).reshape(1, max_num)
-        paddings_indicator = actual_num.astype(np.int64) > max_num
-        return paddings_indicator
+class BaseTransform(object):
+    def __init__(self, cfg, probability=0.5):
+        self.voxelshape = cfg.voxelshape
+        self.voxelsize = cfg.voxelsize
+        self.minX = cfg.minX
+        self.maxX = cfg.maxX
+        self.minY = cfg.minY
+        self.maxY = cfg.maxY
+        self.minZ = cfg.minZ
+        self.maxZ = cfg.maxZ
+        self.boundary = np.array([self.minX, self.maxX,
+                                  self.minY, self.maxY, self.minZ, self.maxZ], dtype=np.float32)
+        self.p = probability
 
-    @staticmethod
-    def get_relative_feature(voxels, num_points_per_voxel):
-        points_mean =  np.sum(voxels[:, :, :3], axis=1, keepdims=True) / num_points_per_voxel.astype(np.float32).reshape(-1, 1, 1)
-        features_relative = voxels[:, :, :3] - points_mean
-        return np.concatenate((voxels, features_relative), axis=-1)
+    def __call__(self, points, labels):
+        # remove outer points
+        points.points = KittiObjectUtils.compute_boundary_inner_points(self.boundary, points.points)
+  
+        # remove object points
+        points.remove_object_innerpoints(labels)
 
-    @staticmethod
-    #@numba.jit(nopython=True)
-    def get_dist_and_div_voxels(voxels, coors, coors_re, num_points_per_voxel, voxelmask, poor_num):
-        points_dist = voxels[:, :, :3] - coors_re
-        voxels_dist = np.concatenate((voxels, points_dist), axis=2)
-        pn = voxelmask.sum(axis=1) <= poor_num
-        
-        poorvoxels = np.ascontiguousarray(voxels_dist[pn])
-        normvoxels = np.ascontiguousarray(voxels_dist[pn != True])
-        voxels_ = np.concatenate((poorvoxels, normvoxels), axis=0)
-        poorcoors = np.ascontiguousarray(coors[pn])
-        normcoors = np.ascontiguousarray(coors[pn != True])
-        coors_ = np.concatenate((poorcoors, normcoors), axis=0)
+        # remove outter objects
+        vlabels = KittiObjectUtils.verify_object_inner_boundary(self.boundary, labels)
 
-        poornum_points_per_voxel = np.ascontiguousarray(num_points_per_voxel[pn])
-        normnum_points_per_voxel = np.ascontiguousarray(num_points_per_voxel[pn != True])
-        num_points_per_voxel_ = np.concatenate((poornum_points_per_voxel, normnum_points_per_voxel), axis=0)
-        return poorvoxels[:, :2, :], normvoxels, coors_, num_points_per_voxel_
+        # random horizontal flip
+        if np.random.uniform(0, 1) < self.p:
+            points.flip3d(vlabels)
 
-    @staticmethod
-    @numba.jit(nopython=True)
-    def voxel2bev_kernel(
-        N, coors, bevsidx, bevcoors, num_voxels_per_bev,
-        v2b_idxmat, bevmulti, max_voxels):
+        # random object flip and rotate
+        if vlabels is not None:
+            for o in vlabels:
+                # if (np.random.uniform(0, 1) < self.p):
+                #         o.flip3d(scene=False)
+                if (np.random.uniform(0, 1) < self.p):
+                    angle = np.random.uniform(-np.pi /4 , np.pi /4)
+                    o.rotate3d(angle)
+                continue
 
-        ndim = 2
-        ndim_minus_1 = ndim - 1
-        coorx = 0
-        coory = 0
-        #coor = np.zeros((2), dtype=np.int64)
-        bev_num = 0
+        rx = np.random.uniform(0.2, 0.8) * self.voxelshape[2] * self.voxelsize[2]
+        ry = np.random.uniform(0.2, 0.8) * self.voxelshape[1] * self.voxelsize[1]
+        selectrandomarea = [False, False, False, False]
+        if vlabels is not None:
+            """
+            ----------------
+            | 3     | 2
+            |       |
+            |       |
+            -------rxry-----
+            | 1     | 0
+            |       |
+            |       |
+            ----------------
+            """
+            for i in range(4):
+                for o in vlabels:
+                    if (o.velox > rx and o.veloy - self.minY > ry):
+                        selectrandomarea[0] = True
+                    elif (o.velox > rx and o.veloy - self.minY <= ry):
+                        selectrandomarea[1] = True
+                    elif (o.velox <= rx and o.veloy - self.minY > ry):
+                        selectrandomarea[2] = True
+                    elif (o.velox <= rx and o.veloy - self.minY <= ry):
+                        selectrandomarea[3] = True
+        else:
+            pass
 
-        for i in range(N):
-            coorx = coors[i, 1] // bevmulti[0]
-            coory = coors[i, 2] // bevmulti[1]
-            bevidx = v2b_idxmat[coorx, coory]
-            if bevidx == 65535:
-                bevidx = bev_num
-                bev_num = bev_num + 1
-                v2b_idxmat[coorx, coory] = bevidx
-                bevcoors[bevidx, 0] = coorx
-                bevcoors[bevidx, 1] = coory
-            num = num_voxels_per_bev[bevidx]
+        points.add_object_innerpoints(vlabels)
+        selectrandomarea.append(rx)
+        selectrandomarea.append(ry)
+        return points, vlabels, selectrandomarea
 
-            if num < max_voxels:
-                bevsidx[bevidx, num] = i
-                num_voxels_per_bev[bevidx] += 1
-            continue
-        return bev_num
-
-    def voxel2bev(self, N, coors):
-        bevsidx = np.zeros((self.bevshape[0]*self.bevshape[1], self.v2b_maxvoxels), dtype=np.long)
-        bevcoors = np.zeros((self.bevshape[0]*self.bevshape[1], 2), dtype=np.long)
-        num_voxels_per_bev = np.zeros((self.bevshape[0]*self.bevshape[1]), dtype=np.long)
-        bevmulti = np.array(self.bevmulti, dtype=np.long)
-        bev_num = VoxelGenerateUtils.voxel2bev_kernel(
-            N, coors, bevsidx, bevcoors, num_voxels_per_bev, self.v2b_idxmat, bevmulti, self.v2b_maxvoxels)
-        bevsidx = bevsidx[:bev_num]
-        bevcoors = bevcoors[:bev_num]
-        num_voxels_per_bev = num_voxels_per_bev[:bev_num]
-        self.v2b_idxmat = self.v2b_idxmat * 0 + 65535
-        return bevsidx, bevcoors, num_voxels_per_bev
-
-    @staticmethod
-    #@numba.jit(nopython=True)
-    def div_bevs(bevsidx, bevcoors, num_voxels_per_bev, bevmask, poor_num, norm_num):
-        a = poor_num < bevmask.sum(axis=1)
-        b = bevmask.sum(axis=1) <= norm_num
-        poor = np.where(a != True)
-        norm = np.where(a & b)
-        rich = np.where(b != True)
-        poorbevsidx = bevsidx[poor]
-        normbevsidx = bevsidx[norm]
-        richbevsidx = bevsidx[rich]
-        poorcoors = bevcoors[poor]
-        normcoors = bevcoors[norm]
-        richcoors = bevcoors[rich]
-        return poorbevsidx[:, :2], normbevsidx[:, :16], richbevsidx, poorcoors, normcoors, richcoors
 
 class RandomMosaic(object):
     def __init__(self, cfg, probability=0.5):
@@ -745,8 +718,9 @@ class RandomMosaic(object):
         """
 
         # set rx,ry
-        rx = np.random.uniform(0.2, 0.8) * self.voxelshape[2] * self.voxelsize[2]
-        ry = np.random.uniform(0.2, 0.8) * self.voxelshape[1] * self.voxelsize[1]
+        rx = np.random.uniform(0.2, 0.8) * (self.maxX - self.minX)
+        ry = np.random.uniform(0.2, 0.8) * (self.maxY - self.minY)
+        #print(rx, ry)
 
         # remove outer points
         for scene in points:
@@ -768,8 +742,8 @@ class RandomMosaic(object):
         for object in labels:
             if (object is not None):
                 for o in object:
-                    if (np.random.uniform(0, 1) < self.p):
-                        o.flip3d(scene=False)
+                    # if (np.random.uniform(0, 1) < self.p):
+                    #     o.flip3d(scene=False)
                     if (np.random.uniform(0, 1) < self.p):
                         angle = np.random.uniform(-np.pi /4 , np.pi /4)
                         o.rotate3d(angle)
@@ -817,6 +791,13 @@ class RandomMosaic(object):
             cnt = cnt + 1
             continue
 
+        # for o in vlabels:
+        #     if o is None:
+        #         continue
+        #     else:
+        #         for object in o:
+        #             print('obejct', object.velox)
+
         # check overlap object and merge
         vkitti, stat = KittiObjectUtils.cehck_overlap_object_and_merge(vlabels)
         
@@ -846,21 +827,38 @@ class RandomMixup(object):
         self.minZ = cfg.minZ
         self.maxZ = cfg.maxZ
 
-    def __call__(self, points, labels, labels_, ra, rx, ry):
-        if ra == 0:
-            minX, maxX, minY, maxY = 0, rx, ry+self.minY, self.maxY
-        elif ra == 1:
-            minX, maxX, minY, maxY = 0, rx, self.minY, ry+self.minY
-        elif ra == 2:
-            minX, maxX, minY, maxY = rx, self.maxX, ry+self.minY, self.maxY
-        elif ra == 3:
-            minX, maxX, minY, maxY = rx, self.maxX, self.minY, ry+self.minY
-        
-        cx = minX + np.random.uniform(0.2, 0.8) * (maxX - minX)
-        cy = minY + np.random.uniform(0.2, 0.8) * (maxY - minY)
+    def __call__(self, points, labels, labels_):
+        faildflag = True
+        for i in range(100): 
+            cx = np.random.uniform(0.2, 0.8) * (self.maxX - self.minX)
+            cy = np.random.uniform(0.2, 0.8) * (self.maxY - self.minY)
+            vaildflag = True
+            
+            if labels is None:
+                faildflag = False
+                break
+
+            for obj in labels:
+                dist = (obj.velox - cx) * (obj.velox - cx) + (obj.veloy - self.minY - cy) * (obj.veloy - self.minY - cy)
+                dist = np.sqrt(dist)
+                if dist < 8:
+                    vaildflag = False
+                    break
+                continue
+
+            if vaildflag:
+                faildflag = False
+                break
+            else:
+                continue
+
+        if faildflag:
+            return points, labels
+
         jumpguy = random.choice(labels_)
-        shiftx, shifty = cx - jumpguy.velox, cy - jumpguy.veloy 
+        shiftx, shifty = cx - jumpguy.velox, cy + self.minY - jumpguy.veloy 
         jumpguy.shift3d(shiftx, shifty, 0)
+        #print(jumpguy.velox, jumpguy.veloy)
         points.remove_object_innerpoints([jumpguy])
         points.add_object_innerpoints([jumpguy])
         if labels is not None:
