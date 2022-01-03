@@ -1,0 +1,150 @@
+class myDarknet(nn.Module):
+    def __init__(self, cfgfile, use_giou_loss):
+        super(myDarknet, self).__init__()
+        self.use_giou_loss = use_giou_loss
+        self.conv0b = myConv2D(4, 16, 7, 2, 'relu')
+        self.conv1b = myConv2D(16, 16, 3, 1, 'relu') # 1/2
+
+        self.conv2b = myConv2D(16, 32, 3, 2, 'relu')
+        self.conv3b = myConv2D(32, 32, 3, 1, 'relu')
+        self.conv4b = myConv2D(32, 32, 3, 1, 'relu') # 1/4
+
+        self.conv6b = myConv2D(32, 64, 3, 2, 'relu')
+        self.conv7b = myConv2D(64, 64, 3, 1, 'relu')
+        self.conv8b = myConv2D(64, 64, 3, 1, 'relu')
+        self.conv9b = myConv2D(64, 64, 3, 1, 'relu') # 1/8
+
+        self.conv10b = myConv2D(64, 64, 3, 2, 'relu')
+        self.conv11b = myConv2D(64, 64, 3, 1, 'relu')
+        self.conv12b = myConv2D(64, 64, 3, 1, 'relu')
+        self.conv13b = myConv2D(64, 64, 3, 1, 'relu') # 1/ 16
+
+        self.conv14b = myConv2D(64, 128, 3, 2, 'relu')
+
+        self.conv1n = myConv2D(64, 128, 3, 1, 'leaky')
+        self.conv2n = myConv2D(128, 256, 3, 1, 'leaky')
+        self.conv3n = myConv2D(256, 128, 1, 1, 'leaky')
+        self.conv4n = myConv2D(128, 256, 3, 1, 'leaky')
+        self.conv5n = myConv2D(256, 128, 1, 1, 'leaky')
+
+        self.conv6n = myConv2D(64, 128, 1, 1, 'leaky') #13b
+
+        self.conv1h = myConv2D(256, 128, 1, 1, 'leaky') # 5n 6n
+        self.conv2h = myConv2D(128, 256, 3, 1, 'leaky')
+        self.conv3h = myConv2D(256, 30, 1, 1, 'linear', bn=False, bias=True)
+        anchor_masks = [0, 1, 2]
+        anchors = [11, 15, 0, 10, 24, 0, 11, 25, 0, 23, 49, 0, 23, 55, 0, 24, 53, 0, 24, 60, 0, 27, 63, 0, 29, 74, 0]
+        anchors = [(anchors[i], anchors[i + 1], math.sin(anchors[i + 2]), math.cos(anchors[i + 2])) for i in
+                    range(0, len(anchors), 3)]
+        anchors = [anchors[i] for i in anchor_masks]
+        self.yolo1 = YoloLayer(num_classes=3, anchors=anchors, stride=8, scale_x_y=1.2, ignore_thresh=0.7)
+
+        self.conv7n = myConv2D(64, 128, 3, 1, 'leaky')
+        self.conv8n = myConv2D(128, 256, 3, 1, 'leaky')
+        self.conv9n = myConv2D(256, 128, 1, 1, 'leaky')
+        self.conv10n = myConv2D(128, 256, 3, 1, 'leaky')
+        self.conv11n = myConv2D(256, 128, 1, 1, 'leaky')
+
+        self.conv12n = myConv2D(128, 128, 1, 1, 'leaky') #14b
+        self.conv13n = myConv2D(128, 128, 3, 2, 'leaky') #5n
+
+        self.conv4h = myConv2D(384, 192, 3, 1, 'leaky') #11n 12n 13n
+        self.conv5h = myConv2D(192, 384, 3, 1, 'leaky')
+        self.conv6h = myConv2D(384, 30, 1, 1, 'linear', bn=False, bias=True)
+        anchor_masks = [3, 4, 5]
+        anchors = [11, 15, 0, 10, 24, 0, 11, 25, 0, 23, 49, 0, 23, 55, 0, 24, 53, 0, 24, 60, 0, 27, 63, 0, 29, 74, 0]
+        anchors = [(anchors[i], anchors[i + 1], math.sin(anchors[i + 2]), math.cos(anchors[i + 2])) for i in
+                    range(0, len(anchors), 3)]
+        anchors = [anchors[i] for i in anchor_masks]
+        self.yolo2 = YoloLayer(num_classes=3, anchors=anchors, stride=16, scale_x_y=1.1, ignore_thresh=0.7) 
+        
+        self.conv14n = myConv2D(128, 256, 3, 1, 'leaky')
+        self.conv15n = myConv2D(256, 512, 3, 1, 'leaky')
+        self.conv16n = myConv2D(512, 256, 1, 1, 'leaky')
+        self.conv17n = myConv2D(256, 512, 3, 1, 'leaky')
+        self.conv18n = myConv2D(512, 256, 1, 1, 'leaky')
+
+        self.conv19n = nn.Sequential(myConv2D(128, 128, 3, 2, 'leaky'), myConv2D(128, 128, 3, 2, 'leaky')) #5n
+        self.conv20n = myConv2D(128, 128, 3, 2, 'leaky') #11n
+
+        # R -1 -37
+        self.conv7h = myConv2D(512, 256, 3, 1, 'leaky') #11n 12n 13n
+        self.conv8h = myConv2D(256, 512, 3, 1, 'leaky')
+        self.conv9h = myConv2D(512, 30, 1, 1, 'linear', bn=False, bias=True)
+        anchor_masks = [6, 7, 8]
+        anchors = [11, 15, 0, 10, 24, 0, 11, 25, 0, 23, 49, 0, 23, 55, 0, 24, 53, 0, 24, 60, 0, 27, 63, 0, 29, 74, 0]
+        anchors = [(anchors[i], anchors[i + 1], math.sin(anchors[i + 2]), math.cos(anchors[i + 2])) for i in
+                    range(0, len(anchors), 3)]
+        anchors = [anchors[i] for i in anchor_masks]
+        self.yolo3 = YoloLayer(num_classes=3, anchors=anchors, stride=32, scale_x_y=1.05, ignore_thresh=0.7)
+
+    def upsample(self, x):
+        B, C, H, W = x.shape
+        return F.interpolate(x, size=[H*2, W*2], mode='bilinear', align_corners=False)
+
+    def forward(self, input, targets=None):
+        img_size = input.size(2)
+        b0 = self.conv0b(input)
+        b1 = self.conv1b(b0)
+
+        b2 = self.conv2b(b1)
+        b3 = self.conv3b(b2)
+        b4 = self.conv4b(b3)
+
+        b6 = self.conv6b(b4)
+        b7 = self.conv7b(b6)
+        b8 = self.conv8b(b7)
+        b9 = self.conv9b(b8)
+
+        b10 = self.conv10b(b9)
+        b11 = self.conv11b(b10)
+        b12 = self.conv12b(b11)
+        b13 = self.conv13b(b12)
+
+        b14 = self.conv14b(b13)
+
+        # 1/8
+        n1 = self.conv1n(b9)
+        n2 = self.conv2n(n1)
+        n3 = self.conv3n(n2)
+        n4 = self.conv2n(n3)
+        n5 = self.conv3n(n4)
+        n6 = self.upsample(self.conv6n(b13))
+        h1 = torch.cat((n5, n6), dim=1)
+        h1 = self.conv1h(h1)
+        h2 = self.conv2h(h1)
+        h3 = self.conv3h(h2)
+
+        # 1/16
+        n7 = self.conv7n(b13)
+        n8 = self.conv8n(n7)
+        n9 = self.conv9n(n8)
+        n10 = self.conv10n(n9)
+        n11 = self.conv11n(n10)
+        n12 = self.upsample(self.conv12n(b14))
+        n13 = self.conv13n(n5)
+        h4 = torch.cat((n11, n12, n13), dim=1)
+        h4 = self.conv4h(h4)
+        h5 = self.conv5h(h4)
+        h6 = self.conv6h(h5)
+
+        # 1/32
+        n14 = self.conv14n(b14)
+        n15 = self.conv15n(n14)
+        n16 = self.conv16n(n15)
+        n17 = self.conv17n(n16)
+        n18 = self.conv18n(n17)
+        n19 = self.conv19n(n5)
+        n20 = self.conv20n(n11)
+        h7 = torch.cat((n18, n19, n20), dim=1)
+        h7 = self.conv7h(h7)
+        h8 = self.conv8h(h7)
+        h9 = self.conv9h(h8)
+
+        out1, layer_loss1 = self.yolo1(h3, targets, img_size, self.use_giou_loss)
+        out2, layer_loss2 = self.yolo2(h6, targets, img_size, self.use_giou_loss)
+        out3, layer_loss3 = self.yolo3(h9, targets, img_size, self.use_giou_loss)
+        loss = layer_loss1 + layer_loss2 + layer_loss3
+        yolo_outputs = to_cpu(torch.cat([out1, out2, out3], 1))
+
+        return yolo_outputs if targets is None else (loss, yolo_outputs)
