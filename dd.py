@@ -339,4 +339,7 @@ sgm = sgm[0, :, :].unsqueeze(0)
 
 block_class, layers = resnet_spec[18]
 model = Resnet(block_class, layers)
+url = model_urls['resnet{}'.format(18)]
+pretrained_state_dict = model_zoo.load_url(url)
+model.load_state_dict(pretrained_state_dict, strict=False)
 fea1, fea2, fea3, fea4 = model(xleft, xright, sgm)
